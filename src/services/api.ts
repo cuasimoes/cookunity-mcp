@@ -1,5 +1,5 @@
 import axios, { AxiosError } from "axios";
-import { CookUnityAuth } from "./auth.js";
+import { CookUnityAuth, AuthOptions } from "./auth.js";
 import { MENU_SERVICE_URL, SUBSCRIPTION_URL } from "../constants.js";
 import type {
   Menu,
@@ -18,8 +18,8 @@ import type {
 export class CookUnityAPI {
   private auth: CookUnityAuth;
 
-  constructor(email: string, password: string) {
-    this.auth = new CookUnityAuth(email, password);
+  constructor(opts: AuthOptions) {
+    this.auth = new CookUnityAuth(opts);
   }
 
   async getMenu(date: string, filters: Record<string, unknown> = {}): Promise<Menu> {

@@ -14,6 +14,10 @@ build/
 .env.local
 .env.production
 
+# Harvested auth tokens (token-auth branch)
+.token
+*.token
+
 # IDE
 .vscode/
 .idea/

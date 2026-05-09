@@ -18,9 +18,10 @@ import { registerPricingTools } from "./tools/pricing.js";
 function createServer(): McpServer {
   const email = process.env.COOKUNITY_EMAIL;
   const password = process.env.COOKUNITY_PASSWORD;
+  const tokenFile = process.env.COOKUNITY_TOKEN_FILE;
 
-  if (!email || !password) {
-    console.error("ERROR: COOKUNITY_EMAIL and COOKUNITY_PASSWORD environment variables are required.");
+  if (!tokenFile && (!email || !password)) {
+    console.error("ERROR: Set COOKUNITY_TOKEN_FILE or both COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
     process.exit(1);
   }
 
@@ -29,7 +30,7 @@ function createServer(): McpServer {
     version: "1.0.0",
   });
 
-  const api = new CookUnityAPI(email, password);
+  const api = new CookUnityAPI({ email, password, tokenFile });
 
   registerMenuTools(server, api);
   registerUserTools(server, api);
