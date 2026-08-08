@@ -15,6 +15,36 @@ import type {
   Invoice,
 } from "../types.js";
 
+// The menu API declares searchBy list fields as lists but returns them as comma-joined
+// strings ("Vegan, Plant-Based"). The GraphQL response is untyped, so this slips past the
+// compiler and only surfaces as a runtime TypeError on .some()/.join(). Normalize here so
+// every caller downstream can rely on MealSearchBy actually being string[].
+//
+// Caveat on `ingredients`: unlike the other three, it is space-joined, and its entries are
+// themselves multi-word ("Rice Wine Vinegar Soy Sauce"), so the original boundaries are not
+// recoverable. Splitting on commas leaves it as one blob for most meals rather than inventing
+// wrong entries. Substring search still works; use the `ingredients { name }` field from
+// getMenuDetailed when a real list is needed.
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value as string[];
+  if (typeof value !== "string") return [];
+  return value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function normalizeMeal<T extends Meal>(meal: T): T {
+  const searchBy = (meal.searchBy ?? {}) as unknown as Record<string, unknown>;
+  return {
+    ...meal,
+    searchBy: {
+      ...meal.searchBy,
+      cuisines: toStringList(searchBy.cuisines),
+      dietTags: toStringList(searchBy.dietTags),
+      ingredients: toStringList(searchBy.ingredients),
+      proteinTags: toStringList(searchBy.proteinTags),
+    },
+  };
+}
+
 export class CookUnityAPI {
   private auth: CookUnityAuth;
 
@@ -39,7 +69,8 @@ export class CookUnityAPI {
       }
     `;
     const data = await this.queryMenu(query, { date, filters });
-    return data.menu as Menu;
+    const menu = data.menu as Menu;
+    return { ...menu, meals: menu.meals.map(normalizeMeal) };
   }
 
   async getMenuDetailed(date: string): Promise<DetailedMeal[]> {
@@ -60,7 +91,7 @@ export class CookUnityAPI {
       }
     `;
     const data = await this.queryMenu(query, { date, filters: {} });
-    return (data.menu as { meals: DetailedMeal[] }).meals;
+    return (data.menu as { meals: DetailedMeal[] }).meals.map(normalizeMeal);
   }
 
   async getUserInfo(): Promise<UserInfo> {
