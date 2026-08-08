@@ -1,0 +1,17 @@
+# The Dockerfile's `COPY . .` ignores .gitignore entirely — without this file, a token
+# sitting in the working tree is copied into the build context and persists in the
+# builder layer and BuildKit cache even though the final stage never copies it.
+.token
+*.token
+.env
+.env.*
+
+.git
+.gitignore
+node_modules
+dist
+build
+*.tsbuildinfo
+
+npm-debug.log*
+.DS_Store

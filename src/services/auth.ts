@@ -53,7 +53,9 @@ export class CookUnityAuth {
     }
     const raw = fs.readFileSync(path, "utf-8").trim();
     if (!raw) throw new Error(`Token file is empty: ${path}`);
-    const token = raw.startsWith("Bearer ") ? raw.slice(7).trim() : raw;
+    // Case-insensitive: a "bearer eyJ..." paste would otherwise survive the strip, still
+    // decode a valid exp, and fail later as an opaque 401 with nothing pointing back here.
+    const token = raw.replace(/^bearer\s+/i, "").trim();
     const expiresAt = this.decodeJwtExpiry(token);
     if (Date.now() >= expiresAt) {
       throw new Error(
@@ -70,9 +72,12 @@ export class CookUnityAuth {
     try {
       payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { exp?: number };
     } catch {
-      // Deliberately swallow the parse error rather than rethrowing it: a SyntaxError's
-      // message embeds the input it choked on, which here is the decoded JWT payload —
-      // account email and subject id — landing credential material in stderr and logs.
+      // Replace the SyntaxError rather than rethrowing it. V8 echoes the first 10 characters
+      // of the input in its "Unexpected token" message — for a decoded JWT payload that is
+      // just the opening claim key, not credential material, so this is hygiene rather than
+      // a fix for a live leak. The real benefit is an actionable message: V8's alternative
+      // is "Expected ',' or '}' after property value in JSON at position 66", which tells a
+      // user nothing about which file to go re-harvest.
       throw new Error("Token payload is not valid JSON. The token file may be truncated or not a JWT.");
     }
     if (typeof payload.exp !== "number") throw new Error("JWT payload has no `exp` claim");

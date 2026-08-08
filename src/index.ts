@@ -80,15 +80,19 @@ async function runHTTP(): Promise<void> {
 process.on("SIGINT", () => process.exit(0));
 process.on("SIGTERM", () => process.exit(0));
 
+// Log the message only, never the error object. util.inspect walks to depth 2 by default,
+// and AxiosError.config.headers.Authorization sits exactly there — printing an error object
+// from a failed API call would dump the full bearer token to stderr. No such error can reach
+// these handlers today (neither runner calls the API before listen), but the cost of keeping
+// it that way is one property access.
+const logFatal = (err: unknown): never => {
+  console.error("Server error:", err instanceof Error ? err.message : String(err));
+  process.exit(1);
+};
+
 const transport = process.env.TRANSPORT ?? "stdio";
 if (transport === "http") {
-  runHTTP().catch((err) => {
-    console.error("Server error:", err);
-    process.exit(1);
-  });
+  runHTTP().catch(logFatal);
 } else {
-  runStdio().catch((err) => {
-    console.error("Server error:", err);
-    process.exit(1);
-  });
+  runStdio().catch(logFatal);
 }
