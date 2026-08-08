@@ -1,3 +1,4 @@
+import fs from "fs";
 import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
@@ -6,19 +7,34 @@ import { AUTH_BASE_URL, AUTH_CLIENT_ID, AUTH_REALM } from "../constants.js";
 
 const REDIRECT_URI = "https://www.cookunity.com";
 
+export interface AuthOptions {
+  email?: string;
+  password?: string;
+  tokenFile?: string;
+}
+
 export class CookUnityAuth {
-  private email: string;
-  private password: string;
+  private email?: string;
+  private password?: string;
+  private tokenFile?: string;
   private tokens: AuthTokens | null = null;
 
-  constructor(email: string, password: string) {
-    this.email = email;
-    this.password = password;
+  constructor(opts: AuthOptions) {
+    this.email = opts.email;
+    this.password = opts.password;
+    this.tokenFile = opts.tokenFile;
   }
 
   async getAccessToken(): Promise<string> {
     if (this.tokens && this.isTokenValid(this.tokens)) {
       return this.tokens.access_token;
+    }
+    if (this.tokenFile) {
+      this.loadTokenFromFile();
+      return this.tokens!.access_token;
+    }
+    if (!this.email || !this.password) {
+      throw new Error("No credentials configured: set COOKUNITY_TOKEN_FILE or both COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
     }
     await this.authenticate();
     return this.tokens!.access_token;
@@ -26,6 +42,46 @@ export class CookUnityAuth {
 
   private isTokenValid(tokens: AuthTokens): boolean {
     return Date.now() < tokens.expires_at - 60000;
+  }
+
+  private loadTokenFromFile(): void {
+    const path = this.tokenFile!;
+    if (!fs.existsSync(path)) {
+      throw new Error(
+        `Token file not found: ${path}. Harvest a fresh token from Chrome DevTools (Network → any GraphQL request → Authorization header) and save it to that path.`
+      );
+    }
+    const raw = fs.readFileSync(path, "utf-8").trim();
+    if (!raw) throw new Error(`Token file is empty: ${path}`);
+    // Case-insensitive: a "bearer eyJ..." paste would otherwise survive the strip, still
+    // decode a valid exp, and fail later as an opaque 401 with nothing pointing back here.
+    const token = raw.replace(/^bearer\s+/i, "").trim();
+    const expiresAt = this.decodeJwtExpiry(token);
+    if (Date.now() >= expiresAt) {
+      throw new Error(
+        `Token in ${path} has expired. Harvest a fresh one from Chrome DevTools.`
+      );
+    }
+    this.tokens = { access_token: token, expires_at: expiresAt };
+  }
+
+  private decodeJwtExpiry(token: string): number {
+    const parts = token.split(".");
+    if (parts.length !== 3) throw new Error("Token is not a valid JWT (expected 3 dot-separated segments)");
+    let payload: { exp?: number };
+    try {
+      payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { exp?: number };
+    } catch {
+      // Replace the SyntaxError rather than rethrowing it. V8 echoes the first 10 characters
+      // of the input in its "Unexpected token" message — for a decoded JWT payload that is
+      // just the opening claim key, not credential material, so this is hygiene rather than
+      // a fix for a live leak. The real benefit is an actionable message: V8's alternative
+      // is "Expected ',' or '}' after property value in JSON at position 66", which tells a
+      // user nothing about which file to go re-harvest.
+      throw new Error("Token payload is not valid JSON. The token file may be truncated or not a JWT.");
+    }
+    if (typeof payload.exp !== "number") throw new Error("JWT payload has no `exp` claim");
+    return payload.exp * 1000;
   }
 
   private async authenticate(): Promise<void> {

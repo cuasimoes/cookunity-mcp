@@ -80,10 +80,37 @@ npx cookunity-mcp-server
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `COOKUNITY_EMAIL` | Yes | CookUnity account email |
-| `COOKUNITY_PASSWORD` | Yes | CookUnity account password |
+| `COOKUNITY_EMAIL` | Unless `COOKUNITY_TOKEN_FILE` is set | CookUnity account email |
+| `COOKUNITY_PASSWORD` | Unless `COOKUNITY_TOKEN_FILE` is set | CookUnity account password |
+| `COOKUNITY_TOKEN_FILE` | Unless email/password are set | Path to a file holding a pre-acquired access token. Takes precedence over email/password. |
 | `TRANSPORT` | No | `stdio` (default) or `http` |
 | `PORT` | No | HTTP port when using `http` transport (default: 3000) |
+
+### Token file authentication
+
+Accounts that sign in through Google (or any other federated provider) have no
+password to submit, so the email/password flow cannot work for them. For those,
+supply a token you have already acquired:
+
+1. Sign in to cookunity.com in Chrome.
+2. DevTools → Network → click any GraphQL request → Request Headers → copy the
+   `Authorization` value. A leading `Bearer ` is stripped automatically if present.
+3. Save it to a file and point `COOKUNITY_TOKEN_FILE` at that path.
+
+```bash
+umask 077 && printf '%s' "<paste-token>" > ~/.config/cookunity/token
+```
+
+**Keep the token file outside the repository.** It is a live bearer credential:
+anyone holding it has full access to the account until it expires. Storing it in
+the working tree risks committing it to a public fork and copying it into Docker
+build contexts. `.gitignore` and `.dockerignore` cover `.token` / `*.token` as a
+backstop, but they only match those names — a path outside the repo needs no
+backstop at all.
+
+Tokens last roughly 24 hours. On expiry the server throws an error naming the file
+and what to do; re-harvesting into the same path is picked up on the next call
+without a restart. Refresh is manual by design — see issue #2.
 
 ## Configuration
 
