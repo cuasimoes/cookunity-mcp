@@ -4,6 +4,7 @@ import { MENU_SERVICE_URL, SUBSCRIPTION_URL } from "../constants.js";
 import type {
   Menu,
   Meal,
+  MealSearchBy,
   DetailedMeal,
   UserInfo,
   Order,
@@ -20,29 +21,40 @@ import type {
 // compiler and only surfaces as a runtime TypeError on .some()/.join(). Normalize here so
 // every caller downstream can rely on MealSearchBy actually being string[].
 //
-// Caveat on `ingredients`: unlike the other three, it is space-joined, and its entries are
-// themselves multi-word ("Rice Wine Vinegar Soy Sauce"), so the original boundaries are not
-// recoverable. Splitting on commas leaves it as one blob for most meals rather than inventing
-// wrong entries. Substring search still works; use the `ingredients { name }` field from
-// getMenuDetailed when a real list is needed.
+// `ingredients` is the exception and must NOT be split. It is space-joined, and 26% of meals
+// (105 of 401 on the 2026-08-10 menu) carry commas *inside* a single ingredient name — the
+// supplier-style "Veg, Tomatoes, Whole, Canned, Italian" is one ingredient, not five.
+// Splitting it yields fragments like "Whole" and "Canned". Keeping the blob intact preserves
+// the substring matching in searchMeals, which is all this field feeds; use the real
+// `ingredients { name }` array from getMenuDetailed when an actual list is needed.
 function toStringList(value: unknown): string[] {
-  if (Array.isArray(value)) return value as string[];
+  if (Array.isArray(value)) return value.map(String);
   if (typeof value !== "string") return [];
   return value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
 }
 
+function toSingleton(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  return trimmed ? [trimmed] : [];
+}
+
 function normalizeMeal<T extends Meal>(meal: T): T {
-  const searchBy = (meal.searchBy ?? {}) as unknown as Record<string, unknown>;
-  return {
-    ...meal,
-    searchBy: {
-      ...meal.searchBy,
-      cuisines: toStringList(searchBy.cuisines),
-      dietTags: toStringList(searchBy.dietTags),
-      ingredients: toStringList(searchBy.ingredients),
-      proteinTags: toStringList(searchBy.proteinTags),
-    },
+  const raw = meal.searchBy as unknown as Record<string, unknown> | null | undefined;
+  // Annotated rather than inlined into the return. Inside a generic returning T, an inline
+  // `{ ...meal, searchBy: { ... } }` is not excess-property-checked — tsc accepts a plain
+  // string where string[] is declared, which is the exact bug this function exists to fix.
+  // The annotation is what makes the compiler guard this boundary going forward.
+  const searchBy: MealSearchBy = {
+    chefFirstName: String(raw?.chefFirstName ?? ""),
+    chefLastName: String(raw?.chefLastName ?? ""),
+    cuisines: toStringList(raw?.cuisines),
+    dietTags: toStringList(raw?.dietTags),
+    proteinTags: toStringList(raw?.proteinTags),
+    ingredients: toSingleton(raw?.ingredients),
   };
+  return { ...meal, searchBy };
 }
 
 export class CookUnityAPI {
