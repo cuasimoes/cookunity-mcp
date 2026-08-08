@@ -357,7 +357,7 @@ export class CookUnityAPI {
     } catch (error) {
       if (error instanceof AxiosError) {
         const status = error.response?.status;
-        if (status === 401) throw new Error("Authentication expired. Please check your COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
+        if (status === 401) throw new Error("Authentication expired or revoked. If using COOKUNITY_TOKEN_FILE, harvest a fresh token; otherwise verify COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
         if (status === 429) throw new Error("Rate limited by CookUnity API. Please wait before retrying.");
         throw new Error(`CookUnity API error (HTTP ${status ?? "unknown"}): ${error.message}`);
       }
