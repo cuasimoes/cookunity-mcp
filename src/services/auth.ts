@@ -66,7 +66,15 @@ export class CookUnityAuth {
   private decodeJwtExpiry(token: string): number {
     const parts = token.split(".");
     if (parts.length !== 3) throw new Error("Token is not a valid JWT (expected 3 dot-separated segments)");
-    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { exp?: number };
+    let payload: { exp?: number };
+    try {
+      payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8")) as { exp?: number };
+    } catch {
+      // Deliberately swallow the parse error rather than rethrowing it: a SyntaxError's
+      // message embeds the input it choked on, which here is the decoded JWT payload —
+      // account email and subject id — landing credential material in stderr and logs.
+      throw new Error("Token payload is not valid JSON. The token file may be truncated or not a JWT.");
+    }
     if (typeof payload.exp !== "number") throw new Error("JWT payload has no `exp` claim");
     return payload.exp * 1000;
   }
