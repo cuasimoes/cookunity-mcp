@@ -4,6 +4,7 @@ import { MENU_SERVICE_URL, SUBSCRIPTION_URL } from "../constants.js";
 import type {
   Menu,
   Meal,
+  MealSearchBy,
   DetailedMeal,
   UserInfo,
   Order,
@@ -14,6 +15,47 @@ import type {
   PriceBreakdown,
   Invoice,
 } from "../types.js";
+
+// The menu API declares searchBy list fields as lists but returns them as comma-joined
+// strings ("Vegan, Plant-Based"). The GraphQL response is untyped, so this slips past the
+// compiler and only surfaces as a runtime TypeError on .some()/.join(). Normalize here so
+// every caller downstream can rely on MealSearchBy actually being string[].
+//
+// `ingredients` is the exception and must NOT be split. It is space-joined, and 26% of meals
+// (105 of 401 on the 2026-08-10 menu) carry commas *inside* a single ingredient name — the
+// supplier-style "Veg, Tomatoes, Whole, Canned, Italian" is one ingredient, not five.
+// Splitting it yields fragments like "Whole" and "Canned". Keeping the blob intact preserves
+// the substring matching in searchMeals, which is all this field feeds; use the real
+// `ingredients { name }` array from getMenuDetailed when an actual list is needed.
+function toStringList(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string") return [];
+  return value.split(",").map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+}
+
+function toSingleton(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  return trimmed ? [trimmed] : [];
+}
+
+function normalizeMeal<T extends Meal>(meal: T): T {
+  const raw = meal.searchBy as unknown as Record<string, unknown> | null | undefined;
+  // Annotated rather than inlined into the return. Inside a generic returning T, an inline
+  // `{ ...meal, searchBy: { ... } }` is not excess-property-checked — tsc accepts a plain
+  // string where string[] is declared, which is the exact bug this function exists to fix.
+  // The annotation is what makes the compiler guard this boundary going forward.
+  const searchBy: MealSearchBy = {
+    chefFirstName: String(raw?.chefFirstName ?? ""),
+    chefLastName: String(raw?.chefLastName ?? ""),
+    cuisines: toStringList(raw?.cuisines),
+    dietTags: toStringList(raw?.dietTags),
+    proteinTags: toStringList(raw?.proteinTags),
+    ingredients: toSingleton(raw?.ingredients),
+  };
+  return { ...meal, searchBy };
+}
 
 export class CookUnityAPI {
   private auth: CookUnityAuth;
@@ -39,7 +81,8 @@ export class CookUnityAPI {
       }
     `;
     const data = await this.queryMenu(query, { date, filters });
-    return data.menu as Menu;
+    const menu = data.menu as Menu;
+    return { ...menu, meals: menu.meals.map(normalizeMeal) };
   }
 
   async getMenuDetailed(date: string): Promise<DetailedMeal[]> {
@@ -60,7 +103,7 @@ export class CookUnityAPI {
       }
     `;
     const data = await this.queryMenu(query, { date, filters: {} });
-    return (data.menu as { meals: DetailedMeal[] }).meals;
+    return (data.menu as { meals: DetailedMeal[] }).meals.map(normalizeMeal);
   }
 
   async getUserInfo(): Promise<UserInfo> {
