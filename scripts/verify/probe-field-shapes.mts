@@ -11,6 +11,7 @@
  *   npm run probe:fields
  */
 import axios from "axios";
+import type { AxiosResponse } from "axios";
 import { MENU_SERVICE_URL } from "../../src/constants.js";
 import { getNextMonday } from "../../src/services/helpers.js";
 import { loadToken } from "./_shared.mts";
@@ -29,11 +30,30 @@ const query = `
     }
   }`;
 
-const response = await axios.post(
-  MENU_SERVICE_URL,
-  { query, variables: { date, filters: {} } },
-  { headers: { Authorization: token, "Content-Type": "application/json" } }
-);
+// An AxiosError carries `config.headers.Authorization`, so letting one reach the default
+// uncaught-exception handler prints the bearer token to stderr several times over. Token
+// refresh is manual by design (#2), which makes an expired token the *expected* failure
+// here — exactly the path that must never surface the error object itself.
+let response: AxiosResponse<{ data?: { menu?: { meals?: RawMeal[] } }; errors?: { message?: string }[] }>;
+try {
+  response = await axios.post(
+    MENU_SERVICE_URL,
+    { query, variables: { date, filters: {} } },
+    { headers: { Authorization: token, "Content-Type": "application/json" } }
+  );
+} catch (error) {
+  const status = axios.isAxiosError(error) ? error.response?.status : undefined;
+  const detail = error instanceof Error ? error.message : String(error);
+  console.error(`Menu request failed${status ? ` (HTTP ${status})` : ""}: ${detail}`);
+  if (status === 401 || status === 403) console.error("Token rejected — run `npm run verify:token`.");
+  process.exit(1);
+}
+
+const errors = response.data?.errors;
+if (Array.isArray(errors) && errors.length > 0) {
+  console.error(`GraphQL error: ${errors.map((e: { message?: string }) => e.message ?? "unknown").join("; ")}`);
+  process.exit(1);
+}
 
 type RawMeal = {
   name: string;

@@ -8,7 +8,7 @@
  *   npm run verify:menu
  */
 import { CookUnityAPI } from "../../src/services/api.js";
-import { formatMeal, formatMealMarkdown, getNextMonday } from "../../src/services/helpers.js";
+import { formatMeal, formatMealMarkdown, getNextMonday, toStructured } from "../../src/services/helpers.js";
 import { resolveTokenPath, makeCheck } from "./_shared.mts";
 
 const date = process.argv[2] ?? getNextMonday();
@@ -43,16 +43,19 @@ const chefIntact = menu.meals.every(
 check("chef name fields preserved", chefIntact);
 
 // The four paths that threw before normalization landed.
+// Assert on the counts, not merely on "did not throw". If normalization regressed to
+// returning [] for every list field, each shape check above still passes ([] is an array,
+// nothing to iterate, 0 > 1 is false) while diet filtering silently matches nothing.
 try {
   const vegan = menu.meals.filter((m) => m.searchBy.dietTags.some((t) => t.toLowerCase().includes("vegan")));
-  check("diet filter", true, `${vegan.length} vegan meals`);
+  check("diet filter", vegan.length > 0, `${vegan.length} vegan meals`);
 } catch (error) {
   check("diet filter", false, String(error));
 }
 
 try {
   const hits = await api.searchMeals("salmon", date);
-  check("searchMeals", true, `${hits.length} hits for "salmon"`);
+  check("searchMeals", hits.length > 0, `${hits.length} hits for "salmon"`);
 } catch (error) {
   check("searchMeals", false, String(error));
 }
@@ -73,7 +76,36 @@ try {
 }
 
 // Payload sizing — the baseline issue #1 is measured against.
-const perMeal = Math.round(JSON.stringify(menu.meals.map(formatMeal)).length / menu.meals.length);
-console.log(`\npayload: ~${perMeal} chars/meal, ~${Math.round((perMeal * menu.meals.length) / 1000)}k chars for the full menu`);
+//
+// Measure the real `output` object that cookunity_get_menu builds, not a bare array of
+// formatted meals: `structuredContent` is `toStructured(output)`, so that object is the cost.
+//
+// The two numbers are NOT additive for Claude Code, which renders `structuredContent` and
+// discards `content`. structuredContent is therefore the agent-context figure and the one #1
+// is optimising; the content-text line is wire cost only, reported so the distinction stays
+// visible and nobody re-derives it from a single conflated number.
+const formattedAll = menu.meals.map(formatMeal);
+const output = {
+  date,
+  total: formattedAll.length,
+  count: formattedAll.length,
+  offset: 0,
+  has_more: false,
+  categories: menu.categories.map((c) => ({ id: c.id, title: c.title })),
+  meals: formattedAll,
+};
+
+const structuredChars = JSON.stringify(toStructured(output)).length;
+const textChars = JSON.stringify(output, null, 2).length;
+const perMeal = Math.round(structuredChars / menu.meals.length);
+
+console.log(
+  `\nstructuredContent (agent context): ~${perMeal} chars/meal, ` +
+    `~${Math.round(structuredChars / 1000)}k chars for the full menu`
+);
+console.log(
+  `content text (pretty, discarded by Claude Code): ` +
+    `~${Math.round(textChars / menu.meals.length)} chars/meal, ~${Math.round(textChars / 1000)}k chars`
+);
 
 done();

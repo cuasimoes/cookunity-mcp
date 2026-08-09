@@ -52,6 +52,16 @@ const send = (method: string, params: unknown): Promise<Record<string, any>> =>
     setTimeout(() => reject(new Error(`timed out waiting for ${method}`)), 30000);
   });
 
+// `total` off a json-format tool response; -1 when it cannot be read, so callers fail loudly.
+const totalOf = (text: string): number => {
+  try {
+    const total = JSON.parse(text)?.total;
+    return typeof total === "number" ? total : -1;
+  } catch {
+    return -1;
+  }
+};
+
 const callTool = async (name: string, args: Record<string, unknown>) => {
   const response = await send("tools/call", { name, arguments: args });
   return {
@@ -79,18 +89,25 @@ try {
   check("authenticated tool call", !menu.failed && menu.text.includes("meals"), menu.failed ? menu.text.slice(0, 120) : `${menu.text.length} chars`);
 
   // The three surfaces that were entirely broken before PR #4.
+  // `total > 0`, not just "no error" — a filter that silently matches nothing returns a
+  // perfectly well-formed empty result, which is the regression most worth catching.
   const search = await callTool("cookunity_search_meals", { query: "salmon", limit: 2, response_format: "json" });
-  check("search_meals", !search.failed, search.failed ? search.text.slice(0, 90) : `${search.text.length} chars`);
+  check("search_meals", !search.failed && totalOf(search.text) > 0, search.failed ? search.text.slice(0, 90) : `${totalOf(search.text)} hits`);
 
   const diet = await callTool("cookunity_get_menu", { diet: "vegan", limit: 2, response_format: "json" });
-  check("diet filter", !diet.failed, diet.failed ? diet.text.slice(0, 90) : `${diet.text.length} chars`);
+  check("diet filter", !diet.failed && totalOf(diet.text) > 0, diet.failed ? diet.text.slice(0, 90) : `${totalOf(diet.text)} vegan meals`);
 
   const markdown = await callTool("cookunity_get_menu", { limit: 2, response_format: "markdown" });
   check("markdown menu", !markdown.failed && markdown.text.includes("###"), markdown.failed ? markdown.text.slice(0, 90) : `${markdown.text.split("\n").length} lines`);
 } catch (error) {
   check("smoke run", false, error instanceof Error ? error.message : String(error));
 } finally {
+  // Await `close`, not just `kill()`. The stdout handler that resolves the last request runs
+  // before pending stderr `data` events are delivered, so asserting straight after kill()
+  // reads a buffer that has not been filled yet — the leak check below would report PASS on
+  // a credential that was in fact written.
   server.kill();
+  await new Promise((resolve) => server.on("close", resolve));
 }
 
 check("startup banner on stderr", stderr.includes("running via stdio"), JSON.stringify(stderr.trim().slice(0, 60)));
