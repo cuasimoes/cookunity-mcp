@@ -1,6 +1,7 @@
 import axios, { AxiosError } from "axios";
 import { CookUnityAuth, AuthOptions } from "./auth.js";
 import { MENU_SERVICE_URL, SUBSCRIPTION_URL } from "../constants.js";
+import { normalizeNutrients } from "./nutrition.js";
 import type {
   Menu,
   Meal,
@@ -94,6 +95,7 @@ export class CookUnityAPI {
             sku stock isNewMeal userRating inventoryId categoryId
             searchBy { cuisines chefFirstName chefLastName dietTags ingredients proteinTags }
             nutritionalFacts { calories fat carbs sodium fiber protein sugar }
+            nutrients { name value unit dailyValue }
             chef { id firstName lastName }
             meatType category { id title label }
             allergens { name }
@@ -103,7 +105,10 @@ export class CookUnityAPI {
       }
     `;
     const data = await this.queryMenu(query, { date, filters: {} });
-    return (data.menu as { meals: DetailedMeal[] }).meals.map(normalizeMeal);
+    return (data.menu as { meals: DetailedMeal[] }).meals.map((meal) => ({
+      ...normalizeMeal(meal),
+      nutrients: normalizeNutrients((meal as { nutrients?: unknown }).nutrients),
+    }));
   }
 
   async getUserInfo(): Promise<UserInfo> {
