@@ -155,6 +155,51 @@ try {
   check("getMenuDetailed normalized", false, String(error));
 }
 
+// The list-view field contract (#1).
+//
+// formatMeal is a projection, and this trimmed two fields out of it. That makes the
+// projection a place where a field can go missing without anything throwing — the tool
+// still renders, the cart call just fails later with an empty inventory_id. So assert
+// both directions: what must survive, and what must stay gone.
+const listView = menu.meals.map(formatMeal);
+
+const cartable = listView.filter(
+  (m) => typeof m.inventory_id === "string" && m.inventory_id.length > 0 && Number.isFinite(m.batch_id)
+);
+check(
+  "every meal is addable to a cart",
+  listView.length > 0 && cartable.length === listView.length,
+  `${cartable.length}/${listView.length} carry inventory_id + batch_id`
+);
+
+// The only signal for new-this-week meals — there is no category or filter for them.
+// A passthrough, not a coercion, so an upstream rename lands here as null.
+const flagged = listView.filter((m) => typeof m.is_new === "boolean");
+check(
+  "is_new is a boolean on every meal",
+  flagged.length === listView.length,
+  `${listView.filter((m) => m.is_new).length} new this week`
+);
+
+const noCuisine = listView.filter((m) => m.tags.cuisines.length === 0);
+check(
+  "cuisine survives the projection",
+  noCuisine.length < listView.length,
+  `${listView.length - noCuisine.length}/${listView.length} meals tagged`
+);
+
+// Guards the trim itself. Both were pure payload with no reader, and the risk is a merge
+// or a well-meaning edit putting them back — which would silently restore ~365 chars/meal.
+const reintroduced = Object.keys(listView[0] ?? {}).filter((k) => k === "image");
+const withIngredients = listView.filter((m) => "ingredients" in m.tags);
+check(
+  "dropped list-view fields stay dropped",
+  reintroduced.length === 0 && withIngredients.length === 0,
+  reintroduced.length === 0 && withIngredients.length === 0
+    ? "no image, no tags.ingredients"
+    : `back: ${[...reintroduced, ...(withIngredients.length ? ["tags.ingredients"] : [])].join(", ")}`
+);
+
 // Payload sizing — the baseline issue #1 is measured against.
 //
 // Measure the real `output` object that cookunity_get_menu builds, not a bare array of
@@ -164,7 +209,7 @@ try {
 // discards `content`. structuredContent is therefore the agent-context figure and the one #1
 // is optimising; the content-text line is wire cost only, reported so the distinction stays
 // visible and nobody re-derives it from a single conflated number.
-const formattedAll = menu.meals.map(formatMeal);
+const formattedAll = listView;
 const output = {
   date,
   total: formattedAll.length,
@@ -186,6 +231,18 @@ console.log(
 console.log(
   `content text (pretty, discarded by Claude Code): ` +
     `~${Math.round(textChars / menu.meals.length)} chars/meal, ~${Math.round(textChars / 1000)}k chars`
+);
+
+// A budget, not a target. 576 chars/meal measured on the 2026-08-17 menu after the trim,
+// against 940 before it. The ceiling is set to catch a field nobody anticipated being added
+// back — reintroducing the ingredient blob alone lands at ~840 — while leaving room for
+// normal week-to-week variation in description and tag lengths. The two named fields have
+// their own explicit check above; this one exists for the growth that isn't named.
+const PER_MEAL_BUDGET = 700;
+check(
+  "list-view payload within budget",
+  perMeal <= PER_MEAL_BUDGET,
+  `${perMeal} chars/meal (budget ${PER_MEAL_BUDGET})`
 );
 
 done();
