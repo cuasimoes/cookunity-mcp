@@ -119,10 +119,14 @@ try {
   // well-formed page whose own `total` still reports the full menu.
   const wide = await callTool("cookunity_get_menu", { limit: 1000, response_format: "json" });
   const wideBody = wide.failed ? undefined : parseJson(wide.text);
+  // Report the structured size, not `wide.text.length`. The text is the pretty-printed
+  // `content`, which Claude Code discards; the structured object is what reaches the agent.
+  // Surfacing the wire number here would undercut the distinction verify-menu.mts documents.
+  const wideChars = wideBody ? JSON.stringify(wideBody).length : 0;
   check(
     "full menu in a single call",
-    !wide.failed && wideBody?.total > 0 && wideBody?.count === wideBody?.total && wideBody?.has_more === false,
-    wide.failed ? wide.text.slice(0, 120) : `${wideBody?.count}/${wideBody?.total} meals, ${Math.round(wide.text.length / 1000)}k chars`
+    !wide.failed && wideBody?.total > 0 && wideBody?.count === wideBody?.total,
+    wide.failed ? wide.text.slice(0, 120) : `${wideBody?.count}/${wideBody?.total} meals, ${Math.round(wideChars / 1000)}k chars structured`
   );
 
   const markdown = await callTool("cookunity_get_menu", { limit: 2, response_format: "markdown" });

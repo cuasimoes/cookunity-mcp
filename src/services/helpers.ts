@@ -15,9 +15,10 @@ export function getNextMonday(): string {
  * `structuredContent` is the agent's context cost, so this shape is the cost of browsing
  * a menu — measured at 940 chars/meal before trimming, ~95k tokens for a full scan
  * (`npm run probe:payload`). Two fields were dropped as pure payload: `searchBy.ingredients`
- * (264 chars/meal, 28% of the total — a single space-joined supplier blob that `searchMeals`
- * matches server-side and nothing downstream reads) and `image` (101 chars/meal, a URL no
- * agent can render). Full ingredients remain available per-meal via `get_meal_details`.
+ * (264 chars/meal, 28% of the total — a single space-joined supplier blob) and `image`
+ * (101 chars/meal, a URL no agent can render). Neither had a reader: `searchMeals` matches
+ * ingredients off the raw `Meal`, never this projection. Full ingredients remain available
+ * per-meal via `get_meal_details`.
  */
 export function formatMeal(meal: Meal): FormattedMeal {
   return {

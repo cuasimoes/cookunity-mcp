@@ -174,7 +174,10 @@ Error Handling:
             lines.push(formatMealMarkdown(m));
             lines.push("");
           }
-          if (hasMore) lines.push(`*More meals available. Use offset: ${params.offset + paged.length} to see next page.*`);
+          // Points at limit, not offset. Paging re-fetches the whole menu per call, so
+          // steering the reader to the next page contradicts the tool description and costs
+          // them a full extra fetch to read a slice they could have had in this one.
+          if (hasMore) lines.push(`*Showing ${paged.length} of ${total}. Use limit: ${total} to get them all in one call.*`);
           text = lines.join("\n");
         }
 
@@ -200,10 +203,10 @@ Args:
 
 Returns (JSON): { query, date, total, count, offset, has_more, meals[] }
 
-Matches against ingredients server-side, but the returned meals carry the list-view
-projection without them — use cookunity_get_meal_details for a meal's ingredient list.
-As with cookunity_get_menu, each call re-fetches the full menu, so prefer one wide call
-over paging.
+Searching fetches the whole menu and matches in memory — across name, description,
+ingredients, tags, chef and category. Matched meals come back as the list-view projection,
+which does not carry ingredients; use cookunity_get_meal_details for a meal's ingredient
+list. Since every call re-fetches the full menu, prefer one wide call over paging.
 
 Examples:
   - Find salmon dishes: { query: "salmon" }
@@ -249,7 +252,7 @@ Error Handling:
             lines.push(formatMealMarkdown(m));
             lines.push("");
           }
-          if (hasMore) lines.push(`*Use offset: ${params.offset + paged.length} for more results.*`);
+          if (hasMore) lines.push(`*Showing ${paged.length} of ${total}. Use limit: ${total} to get them all in one call.*`);
           text = lines.join("\n");
         }
 

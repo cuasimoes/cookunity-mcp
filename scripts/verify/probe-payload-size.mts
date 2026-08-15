@@ -41,6 +41,13 @@ for (const meal of formatted) {
 }
 
 const grand = JSON.stringify(formatted).length;
+
+// Per-meal `{}`, the `"tags":{}` wrapper, and the array's brackets and separators. Small,
+// but attributing it keeps the table exhaustive — otherwise the rows sum to ~97% and the
+// TOTAL row silently absorbs the difference.
+const attributed = [...totals.values()].reduce((sum, n) => sum + n, 0);
+add("(structural overhead)", grand - attributed);
+
 const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1]);
 
 console.log("field                bytes      %     per meal");
@@ -51,6 +58,10 @@ for (const [field, bytes] of ranked) {
   console.log(`${field.padEnd(20)} ${String(bytes).padStart(10)} ${pct} ${perMeal}`);
 }
 
+const summed = [...totals.values()].reduce((sum, n) => sum + n, 0);
 console.log("-------------------- ---------- ----- --------");
-console.log(`${"TOTAL".padEnd(20)} ${String(grand).padStart(10)} ${"100.0".padStart(5)} ${(grand / formatted.length).toFixed(0).padStart(8)}`);
+console.log(
+  `${"TOTAL".padEnd(20)} ${String(grand).padStart(10)} ` +
+    `${((summed / grand) * 100).toFixed(1).padStart(5)} ${(grand / formatted.length).toFixed(0).padStart(8)}`
+);
 console.log(`\n~${Math.round(grand / 4 / 1000)}k tokens for a full-menu scan (4 chars/token).`);
