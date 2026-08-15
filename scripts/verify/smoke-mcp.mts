@@ -21,6 +21,12 @@ const server = spawn("node", [path.join(REPO_ROOT, "dist/index.js")], {
 let stderr = "";
 server.stderr.on("data", (chunk) => (stderr += chunk.toString()));
 
+// Attach at spawn, await in `finally`. Attaching the listener inside `finally` instead would
+// never fire when the child has already closed — Node does not replay events — and the
+// stderr assertions below would be skipped entirely on exactly the startup-crash path they
+// exist to police. Guarding on `exitCode` does not help: it is set on `exit`, before `close`.
+const closed = new Promise((resolve) => server.once("close", resolve));
+
 const pending = new Map<number, (msg: Record<string, any>) => void>();
 let buffer = "";
 server.stdout.on("data", (chunk) => {
@@ -107,7 +113,7 @@ try {
   // reads a buffer that has not been filled yet — the leak check below would report PASS on
   // a credential that was in fact written.
   server.kill();
-  await new Promise((resolve) => server.on("close", resolve));
+  await closed;
 }
 
 check("startup banner on stderr", stderr.includes("running via stdio"), JSON.stringify(stderr.trim().slice(0, 60)));
