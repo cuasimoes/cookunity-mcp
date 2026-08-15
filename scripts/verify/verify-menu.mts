@@ -92,16 +92,29 @@ try {
   //
   // This is also the net under normalizeNutrients' silent drops. A value drifting to a shape
   // it rejects ("28 g") removes the row entirely, and the only way that surfaces is a
-  // nutrient going missing here. calories and protein are on the list for that reason, not
-  // because they carry a daily value.
+  // nutrient going missing here. So the list is every nutrient the API returns, not just the
+  // ones carrying a daily value — a shorter list would leave the rest able to vanish with
+  // every check green. All 16 are on 404/404 meals as of 2026-08-17.
+  //
+  // carbon_footprint is deliberately excluded: it is not a nutrient, it appears on only ~60%
+  // of meals, and it is the one key whose spelling the API is inconsistent about.
   const REQUIRED_NUTRIENTS = [
     "calories",
     "totalfat",
     "saturatedfat",
+    "transfat",
     "cholesterol",
     "sodium",
     "totalcarbohydrate",
+    "dietaryfiber",
+    "totalsugars",
+    "addedsugar",
     "protein",
+    "vitamind",
+    "calcium",
+    "iron",
+    "potassium",
+    "phosphorus",
   ];
   // Checked against `detailed`, not `withNutrients`: a meal with no nutrients at all must
   // fail here too. Filtering first would make every assertion below vacuously true on the

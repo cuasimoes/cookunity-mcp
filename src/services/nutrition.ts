@@ -44,7 +44,7 @@ export function nutrientsByName(nutrients: Nutrient[]): Map<string, Nutrient> {
  * Rejects everything else, including hex and single-element arrays, which
  * `Number()` would otherwise coerce to a confident wrong answer.
  */
-export function parseNutrientValue(raw: unknown): number | null {
+function parseNutrientValue(raw: unknown): number | null {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
