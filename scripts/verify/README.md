@@ -12,6 +12,7 @@ assert against whatever the menu returns today.
 |---|---|
 | `npm run verify:token` | Is the token usable? Distinguishes missing / expired / revoked. |
 | `npm run probe:fields` | What shapes is the API returning? Flags drift from `types.ts`. |
+| `npm run probe:nutrition` | Which nutrition fields exist? Server introspection is off, so this classifies validation errors to tell absent fields from merely-unselected ones. |
 | `npm run verify:menu` | Does `normalizeMeal` hold, and do the previously-throwing paths work? |
 | `npm run verify:smoke` | Does the built server boot, authenticate, and serve tool calls? |
 

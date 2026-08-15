@@ -35,7 +35,8 @@
     "verify:token": "tsx scripts/verify/check-token.mts",
     "verify:menu": "tsx scripts/verify/verify-menu.mts",
     "verify:smoke": "npm run build && tsx scripts/verify/smoke-mcp.mts",
-    "probe:fields": "tsx scripts/verify/probe-field-shapes.mts"
+    "probe:fields": "tsx scripts/verify/probe-field-shapes.mts",
+    "probe:nutrition": "tsx scripts/verify/probe-nutrition-fields.mts"
   },
   "engines": {
     "node": ">=18"
