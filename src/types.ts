@@ -32,6 +32,28 @@ export interface Meal {
 export interface DetailedMeal extends Meal {
   allergens: Allergen[];
   ingredients: Ingredient[];
+  nutrients: Nutrient[];
+}
+
+/**
+ * One row of the printed nutrition label. Richer than `NutritionFacts`: it
+ * carries cholesterol and saturated fat, and `dailyValue` is precomputed
+ * server-side so consumers need no FDA reference table.
+ *
+ * `name` is the API's own key and its casing is not consistent — `saturatedFat`
+ * and `totalFat` sit alongside `added_sugar` and `total_carbohydrate`, and at
+ * least one meal returns `carbonFootprint` where the rest return
+ * `carbon_footprint`. Look these up through `canonicalNutrientName`, never by
+ * literal string match.
+ *
+ * `dailyValue` is `""` (not null) for nutrients with no established DV —
+ * calories, trans fat, total sugars, carbon footprint.
+ */
+export interface Nutrient {
+  name: string;
+  value: number;
+  unit: string;
+  dailyValue: string;
 }
 
 export interface MealSearchBy {

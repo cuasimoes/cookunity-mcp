@@ -5,6 +5,79 @@ import type { GetMenuInput, SearchMealsInput, GetMealDetailsInput } from "../sch
 import type { DetailedMeal } from "../types.js";
 import { ResponseFormat } from "../constants.js";
 import { getNextMonday, formatMeal, formatMealMarkdown, handleError, toStructured } from "../services/helpers.js";
+import { nutrientsByName, canonicalNutrientName } from "../services/nutrition.js";
+
+/**
+ * Nutrition-label rows in US FDA panel order, keyed by canonical nutrient name.
+ * Presentation only — ordering and display names are this renderer's concern,
+ * not the API client's.
+ *
+ * Deliberately omits `carbon_footprint`: it is not a nutrient, it is missing on
+ * ~40% of meals, and it is the one field whose API spelling is unstable.
+ */
+const NUTRITION_LABEL_ROWS: { key: string; label: string }[] = [
+  { key: "calories", label: "Calories" },
+  { key: "totalfat", label: "Total Fat" },
+  { key: "saturatedfat", label: "Saturated Fat" },
+  { key: "transfat", label: "Trans Fat" },
+  { key: "cholesterol", label: "Cholesterol" },
+  { key: "sodium", label: "Sodium" },
+  { key: "totalcarbohydrate", label: "Total Carbohydrate" },
+  { key: "dietaryfiber", label: "Dietary Fiber" },
+  { key: "totalsugars", label: "Total Sugars" },
+  { key: "addedsugar", label: "Added Sugar" },
+  { key: "protein", label: "Protein" },
+  { key: "vitamind", label: "Vitamin D" },
+  { key: "calcium", label: "Calcium" },
+  { key: "iron", label: "Iron" },
+  { key: "potassium", label: "Potassium" },
+  { key: "phosphorus", label: "Phosphorus" },
+];
+
+/**
+ * Not a nutrient, absent on ~40% of meals, and the one field whose API spelling
+ * is unstable — it is kept out of the printed label. It stays in the JSON
+ * `nutrition_label[]`, which is a faithful passthrough of what the API returned.
+ */
+const NON_NUTRIENT_KEY = "carbonfootprint";
+
+/**
+ * Render the full label from `nutrients`, which carries cholesterol, saturated
+ * fat, and a server-computed `%DV` that `nutritionalFacts` lacks entirely.
+ *
+ * Returns null when there is nothing to print so the caller can fall back —
+ * every meal on the menus checked so far has a full label, but an empty table
+ * would read as "this meal has no nutrition data" rather than "we failed to
+ * ask". Gated on the built rows, not on `nutrients.length`: a meal carrying
+ * only a carbon footprint, or an upstream rename of every key, yields a header
+ * with no rows under it.
+ */
+function renderNutritionLabel(meal: DetailedMeal): string[] | null {
+  const byName = nutrientsByName(meal.nutrients);
+  const rows: string[] = [];
+  for (const { key, label } of NUTRITION_LABEL_ROWS) {
+    const nutrient = byName.get(key);
+    if (!nutrient) continue;
+    // "" is the API's marker for a nutrient with no established DV. An em dash
+    // says "no DV exists"; "0%" would be a factual claim we cannot make.
+    const dv = nutrient.dailyValue === "" ? "—" : nutrient.dailyValue;
+    rows.push(`| ${label} | ${nutrient.value} ${nutrient.unit} | ${dv} |`);
+  }
+
+  // Anything the API added that this renderer does not know about. Surfaced
+  // rather than dropped, so a new nutrient shows up the week it appears.
+  const known = new Set(NUTRITION_LABEL_ROWS.map((row) => row.key));
+  for (const nutrient of meal.nutrients) {
+    const key = canonicalNutrientName(nutrient.name);
+    if (known.has(key) || key === NON_NUTRIENT_KEY) continue;
+    const dv = nutrient.dailyValue === "" ? "—" : nutrient.dailyValue;
+    rows.push(`| ${nutrient.name} | ${nutrient.value} ${nutrient.unit} | ${dv} |`);
+  }
+
+  if (rows.length === 0) return null;
+  return ["| Nutrient | Amount | % Daily Value |", "|----------|--------|---------------|", ...rows];
+}
+
 export function registerMenuTools(server: McpServer, api: CookUnityAPI): void {
   server.registerTool(
     "cookunity_get_menu",
@@ -177,7 +250,7 @@ Error Handling:
     "cookunity_get_meal_details",
     {
       title: "Get CookUnity Meal Details",
-      description: `Get full details for a specific meal including allergens, complete ingredients list, nutrition facts, diet tags, and chef info.
+      description: `Get full details for a specific meal including allergens, complete ingredients list, the full nutrition label with daily values, diet tags, and chef info.
 
 Args:
   - meal_id (number, optional): Numeric meal ID (e.g. 12272)
@@ -187,7 +260,15 @@ Args:
 
 At least one of meal_id or inventory_id is required.
 
-Returns (JSON): Full meal object with allergens[], ingredients[], nutritionalFacts (incl. protein, sugar), searchBy tags, chef info
+Returns (JSON): Full meal object with allergens[], ingredients[], searchBy tags, chef info, and two nutrition views:
+  - nutrition_label[]: every nutrition row the API returned — { name, value, unit, daily_value }.
+    The only source of cholesterol, saturated fat, and % daily values. daily_value is a
+    percentage string ("68%"), or "" where no DV is established (calories, trans fat, total
+    sugars). Percentages are as printed — no FDA reference table needed to read them. Note
+    this is a faithful passthrough, so it also carries non-nutrient rows such as
+    carbon_footprint; the markdown table omits those.
+  - nutrition: the legacy narrow block (calories, fat, carbs, sodium, fiber, protein, sugar).
+    No cholesterol, no daily values, and its values are strings, not numbers.
 Returns (Markdown): Formatted card with sections for Description, Nutrition, Ingredients, Allergens, Chef, Tags
 
 Examples:
@@ -246,6 +327,16 @@ Error Handling:
             name: `${meal.chef.firstName} ${meal.chef.lastName}`,
           },
           nutrition: meal.nutritionalFacts,
+          // The full printed label. Unlike `nutrition`, this carries cholesterol,
+          // saturated fat, and a server-computed daily_value, so a consumer
+          // applying %DV limits needs no FDA reference table. daily_value is ""
+          // for nutrients with no established DV.
+          nutrition_label: meal.nutrients.map((n) => ({
+            name: n.name,
+            value: n.value,
+            unit: n.unit,
+            daily_value: n.dailyValue,
+          })),
           allergens: (meal.allergens || []).map((a) => a.name),
           ingredients: (meal.ingredients || []).map((i) => i.name),
           tags: {
@@ -261,6 +352,7 @@ Error Handling:
           text = JSON.stringify(output, null, 2);
         } else {
           const n = meal.nutritionalFacts;
+          const label = renderNutritionLabel(meal);
           const lines = [
             `# ${meal.name}${meal.isNewMeal ? " 🆕" : ""}`,
             `*${meal.shortDescription}*`,
@@ -273,15 +365,17 @@ Error Handling:
             `**SKU**: ${meal.sku} | **Inventory ID**: \`${meal.inventoryId}\``,
             "",
             "## Nutrition",
-            `| Nutrient | Amount |`,
-            `|----------|--------|`,
-            `| Calories | ${n.calories} |`,
-            `| Protein  | ${n.protein ?? "—"} g |`,
-            `| Fat      | ${n.fat} g |`,
-            `| Carbs    | ${n.carbs} g |`,
-            `| Fiber    | ${n.fiber} g |`,
-            `| Sugar    | ${n.sugar ?? "—"} g |`,
-            `| Sodium   | ${n.sodium} mg |`,
+            ...(label ?? [
+              `| Nutrient | Amount |`,
+              `|----------|--------|`,
+              `| Calories | ${n.calories} |`,
+              `| Protein  | ${n.protein ?? "—"} g |`,
+              `| Fat      | ${n.fat} g |`,
+              `| Carbs    | ${n.carbs} g |`,
+              `| Fiber    | ${n.fiber} g |`,
+              `| Sugar    | ${n.sugar ?? "—"} g |`,
+              `| Sodium   | ${n.sodium} mg |`,
+            ]),
             "",
             "## Ingredients",
             (meal.ingredients || []).length > 0

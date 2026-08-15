@@ -9,6 +9,7 @@
  */
 import { CookUnityAPI } from "../../src/services/api.js";
 import { formatMeal, formatMealMarkdown, getNextMonday, toStructured } from "../../src/services/helpers.js";
+import { nutrientsByName } from "../../src/services/nutrition.js";
 import { resolveTokenPath, makeCheck } from "./_shared.mts";
 
 const date = process.argv[2] ?? getNextMonday();
@@ -71,6 +72,85 @@ try {
   const detailed = await api.getMenuDetailed(date);
   const normalized = detailed.every((m) => Array.isArray(m.searchBy.dietTags));
   check("getMenuDetailed normalized", normalized, `${detailed.length} meals`);
+
+  // The nutrition label is the reason getMenuDetailed exists for %DV work, and it arrives
+  // through the same untyped cast as everything else here. A rename upstream would empty
+  // these silently — the tool would still render, just without cholesterol.
+  // The `detailed.length > 0` guard belongs here, on the first nutrient assertion: on an
+  // empty menu every check below passes vacuously, so one of them has to refuse to.
+  const withNutrients = detailed.filter((m) => m.nutrients.length > 0);
+  check(
+    "nutrients present",
+    detailed.length > 0 && withNutrients.length === detailed.length,
+    `${withNutrients.length}/${detailed.length} meals`
+  );
+
+  // Nutrients a label must always carry. This is a presence check, not a policy: nothing here
+  // or in src/ knows about thresholds, and no consumer should read a limit into this list.
+  // Named individually rather than counted — "7 nutrients found" would still pass if
+  // cholesterol vanished and some other nutrient appeared twice.
+  //
+  // This is also the net under normalizeNutrients' silent drops. A value drifting to a shape
+  // it rejects ("28 g") removes the row entirely, and the only way that surfaces is a
+  // nutrient going missing here. So the list is every nutrient the API returns, not just the
+  // ones carrying a daily value — a shorter list would leave the rest able to vanish with
+  // every check green. All 16 are on 404/404 meals as of 2026-08-17.
+  //
+  // carbon_footprint is deliberately excluded: it is not a nutrient, it appears on only ~60%
+  // of meals, and it is the one key whose spelling the API is inconsistent about.
+  const REQUIRED_NUTRIENTS = [
+    "calories",
+    "totalfat",
+    "saturatedfat",
+    "transfat",
+    "cholesterol",
+    "sodium",
+    "totalcarbohydrate",
+    "dietaryfiber",
+    "totalsugars",
+    "addedsugar",
+    "protein",
+    "vitamind",
+    "calcium",
+    "iron",
+    "potassium",
+    "phosphorus",
+  ];
+  // Checked against `detailed`, not `withNutrients`: a meal with no nutrients at all must
+  // fail here too. Filtering first would make every assertion below vacuously true on the
+  // exact regression they exist to catch — an empty array satisfies both some() and every().
+  const missing = REQUIRED_NUTRIENTS.filter((key) =>
+    detailed.some((meal) => !nutrientsByName(meal.nutrients).has(key))
+  );
+  check(
+    "required nutrients on every meal",
+    missing.length === 0,
+    missing.length === 0 ? REQUIRED_NUTRIENTS.join(", ") : `missing on some meals: ${missing.join(", ")}`
+  );
+
+  // dailyValue is what makes this worth querying over nutritionalFacts. It is "" for
+  // nutrients with no established DV, so assert on one that must always carry a percentage.
+  const cholesterolDV = detailed.every((meal) => {
+    const row = nutrientsByName(meal.nutrients).get("cholesterol");
+    return row !== undefined && /^\d+(\.\d+)?%$/.test(row.dailyValue);
+  });
+  check("cholesterol carries a % daily value", cholesterolDV);
+
+  // Deliberately NOT asserting that every value is a finite number: normalizeNutrients drops
+  // any row that is not, so such a check is a post-condition of the function under test and
+  // cannot fail for any API response. Value drift is covered by the presence check above —
+  // a rejected value removes the row, which shows up there as a missing nutrient.
+  //
+  // `unit` is the field with no such guard: it is coerced with String(x ?? ""), so an empty
+  // or dropped unit survives normalization and renders as "Sodium | 940 |" with no mg.
+  const unitless = detailed.flatMap((meal) =>
+    meal.nutrients.filter((n) => n.unit.trim() === "").map((n) => n.name)
+  );
+  check(
+    "every nutrient carries a unit",
+    unitless.length === 0,
+    unitless.length === 0 ? undefined : `missing unit: ${[...new Set(unitless)].join(", ")}`
+  );
 } catch (error) {
   check("getMenuDetailed normalized", false, String(error));
 }

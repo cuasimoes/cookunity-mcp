@@ -10,6 +10,7 @@
 import path from "path";
 import { spawn } from "child_process";
 import { REPO_ROOT, resolveTokenPath, makeCheck, looksLikeJwt } from "./_shared.mts";
+import { canonicalNutrientName } from "../../src/services/nutrition.js";
 
 const { check, done } = makeCheck();
 
@@ -58,14 +59,20 @@ const send = (method: string, params: unknown): Promise<Record<string, any>> =>
     setTimeout(() => reject(new Error(`timed out waiting for ${method}`)), 30000);
   });
 
+// A failing tool returns prose, not JSON. Parsing it unguarded throws past the individual
+// check and collapses several assertions into one generic "smoke run" failure.
+const parseJson = (text: string): any => {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+};
+
 // `total` off a json-format tool response; -1 when it cannot be read, so callers fail loudly.
 const totalOf = (text: string): number => {
-  try {
-    const total = JSON.parse(text)?.total;
-    return typeof total === "number" ? total : -1;
-  } catch {
-    return -1;
-  }
+  const total = parseJson(text)?.total;
+  return typeof total === "number" ? total : -1;
 };
 
 const callTool = async (name: string, args: Record<string, unknown>) => {
@@ -105,6 +112,50 @@ try {
 
   const markdown = await callTool("cookunity_get_menu", { limit: 2, response_format: "markdown" });
   check("markdown menu", !markdown.failed && markdown.text.includes("###"), markdown.failed ? markdown.text.slice(0, 90) : `${markdown.text.split("\n").length} lines`);
+
+  // get_meal_details is the only tool that renders the nutrition label, and the label is the
+  // reason it queries Meal.nutrients at all. Asserting on a named nutrient rather than on the
+  // table header: a renderer that emitted headers and no rows would satisfy a header check
+  // while losing every number, which is the failure worth catching.
+  const first = parseJson(menu.text)?.meals?.[0];
+  const inventoryId = first?.inventory_id;
+  if (typeof inventoryId !== "string") {
+    check("meal details — nutrition label", false, "could not read an inventory_id from get_menu");
+  } else {
+    const details = await callTool("cookunity_get_meal_details", {
+      inventory_id: inventoryId,
+      response_format: "markdown",
+    });
+    // The row must carry an amount, a unit and a percentage. Asserting only on the header and
+    // the word "Cholesterol" would stay green with every value blanked, since the header is
+    // static and a valueless row still renders with an em dash.
+    const hasLabel =
+      !details.failed &&
+      details.text.includes("% Daily Value") &&
+      /\|\s*Cholesterol\s*\|\s*\d+(\.\d+)?\s*\w+\s*\|\s*\d+(\.\d+)?%\s*\|/.test(details.text);
+    check("meal details — nutrition label", hasLabel, details.failed ? details.text.slice(0, 90) : first.name);
+
+    // The JSON view is a separate code path from the markdown table.
+    const detailsJson = await callTool("cookunity_get_meal_details", {
+      inventory_id: inventoryId,
+      response_format: "json",
+    });
+    const label = detailsJson.failed ? undefined : parseJson(detailsJson.text)?.nutrition_label;
+    // Asserting the *shape* of daily_value, not just that it is a string: normalizeNutrients
+    // coerces it with String(x ?? ""), so `typeof === "string"` is its post-condition and
+    // holds even if every percentage upstream went blank.
+    //
+    // Matched through canonicalNutrientName because the API mixes conventions across keys;
+    // a literal "cholesterol" would redden this check on a casing change the tool handles fine.
+    const hasCholesterol =
+      Array.isArray(label) &&
+      label.some(
+        (n: { name?: string; daily_value?: string }) =>
+          canonicalNutrientName(String(n?.name ?? "")) === "cholesterol" &&
+          /^\d+(\.\d+)?%$/.test(String(n?.daily_value))
+      );
+    check("meal details — nutrition_label[] json", hasCholesterol, Array.isArray(label) ? `${label.length} rows` : "no nutrition_label array");
+  }
 } catch (error) {
   check("smoke run", false, error instanceof Error ? error.message : String(error));
 } finally {
