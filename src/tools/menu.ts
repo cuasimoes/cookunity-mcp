@@ -35,16 +35,24 @@ const NUTRITION_LABEL_ROWS: { key: string; label: string }[] = [
 ];
 
 /**
+ * Not a nutrient, absent on ~40% of meals, and the one field whose API spelling
+ * is unstable — it is kept out of the printed label. It stays in the JSON
+ * `nutrition_label[]`, which is a faithful passthrough of what the API returned.
+ */
+const NON_NUTRIENT_KEY = "carbonfootprint";
+
+/**
  * Render the full label from `nutrients`, which carries cholesterol, saturated
  * fat, and a server-computed `%DV` that `nutritionalFacts` lacks entirely.
  *
- * Returns null when a meal carries no nutrients so the caller can fall back —
- * every meal on the menus checked so far has them, but an empty table would
- * read as "this meal has no nutrition data" rather than "we failed to ask".
+ * Returns null when there is nothing to print so the caller can fall back —
+ * every meal on the menus checked so far has a full label, but an empty table
+ * would read as "this meal has no nutrition data" rather than "we failed to
+ * ask". Gated on the built rows, not on `nutrients.length`: a meal carrying
+ * only a carbon footprint, or an upstream rename of every key, yields a header
+ * with no rows under it.
  */
 function renderNutritionLabel(meal: DetailedMeal): string[] | null {
-  if (meal.nutrients.length === 0) return null;
-
   const byName = nutrientsByName(meal.nutrients);
   const rows: string[] = [];
   for (const { key, label } of NUTRITION_LABEL_ROWS) {
@@ -61,11 +69,12 @@ function renderNutritionLabel(meal: DetailedMeal): string[] | null {
   const known = new Set(NUTRITION_LABEL_ROWS.map((row) => row.key));
   for (const nutrient of meal.nutrients) {
     const key = canonicalNutrientName(nutrient.name);
-    if (known.has(key) || key === "carbonfootprint") continue;
+    if (known.has(key) || key === NON_NUTRIENT_KEY) continue;
     const dv = nutrient.dailyValue === "" ? "—" : nutrient.dailyValue;
     rows.push(`| ${nutrient.name} | ${nutrient.value} ${nutrient.unit} | ${dv} |`);
   }
 
+  if (rows.length === 0) return null;
   return ["| Nutrient | Amount | % Daily Value |", "|----------|--------|---------------|", ...rows];
 }
 
@@ -252,10 +261,12 @@ Args:
 At least one of meal_id or inventory_id is required.
 
 Returns (JSON): Full meal object with allergens[], ingredients[], searchBy tags, chef info, and two nutrition views:
-  - nutrition_label[]: the full printed label — { name, value, unit, daily_value }. The only
-    source of cholesterol, saturated fat, and % daily values. daily_value is a percentage
-    string ("68%"), or "" where no DV is established (calories, trans fat, total sugars).
-    Percentages are as printed on the label — no FDA reference table needed to read them.
+  - nutrition_label[]: every nutrition row the API returned — { name, value, unit, daily_value }.
+    The only source of cholesterol, saturated fat, and % daily values. daily_value is a
+    percentage string ("68%"), or "" where no DV is established (calories, trans fat, total
+    sugars). Percentages are as printed — no FDA reference table needed to read them. Note
+    this is a faithful passthrough, so it also carries non-nutrient rows such as
+    carbon_footprint; the markdown table omits those.
   - nutrition: the legacy narrow block (calories, fat, carbs, sodium, fiber, protein, sugar).
     No cholesterol, no daily values, and its values are strings, not numbers.
 Returns (Markdown): Formatted card with sections for Description, Nutrition, Ingredients, Allergens, Chef, Tags

@@ -105,6 +105,37 @@ try {
 
   const markdown = await callTool("cookunity_get_menu", { limit: 2, response_format: "markdown" });
   check("markdown menu", !markdown.failed && markdown.text.includes("###"), markdown.failed ? markdown.text.slice(0, 90) : `${markdown.text.split("\n").length} lines`);
+
+  // get_meal_details is the only tool that renders the nutrition label, and the label is the
+  // reason it queries Meal.nutrients at all. Asserting on a named nutrient rather than on the
+  // table header: a renderer that emitted headers and no rows would satisfy a header check
+  // while losing every number, which is the failure worth catching.
+  const first = JSON.parse(menu.text)?.meals?.[0];
+  const inventoryId = first?.inventory_id;
+  if (typeof inventoryId !== "string") {
+    check("meal details — nutrition label", false, "could not read an inventory_id from get_menu");
+  } else {
+    const details = await callTool("cookunity_get_meal_details", {
+      inventory_id: inventoryId,
+      response_format: "markdown",
+    });
+    const hasLabel =
+      !details.failed &&
+      details.text.includes("% Daily Value") &&
+      /\|\s*Cholesterol\s*\|/.test(details.text);
+    check("meal details — nutrition label", hasLabel, details.failed ? details.text.slice(0, 90) : first.name);
+
+    // The JSON view is a separate code path from the markdown table.
+    const detailsJson = await callTool("cookunity_get_meal_details", {
+      inventory_id: inventoryId,
+      response_format: "json",
+    });
+    const label = detailsJson.failed ? null : JSON.parse(detailsJson.text)?.nutrition_label;
+    const hasCholesterol =
+      Array.isArray(label) &&
+      label.some((n: { name?: string; daily_value?: string }) => n?.name === "cholesterol" && typeof n.daily_value === "string");
+    check("meal details — nutrition_label[] json", hasCholesterol, Array.isArray(label) ? `${label.length} rows` : "no nutrition_label array");
+  }
 } catch (error) {
   check("smoke run", false, error instanceof Error ? error.message : String(error));
 } finally {
