@@ -91,17 +91,26 @@ Args:
   - diet (string, optional): Filter by diet tag (e.g. 'vegan', 'gluten-free')
   - max_price (number, optional): Max price in dollars
   - min_rating (number, optional): Min rating 0-5
-  - limit (number): Results per page, default 20, max 50
+  - limit (number): Results per page, default 20, max 1000
   - offset (number): Pagination offset, default 0
   - response_format ('markdown'|'json'): Output format
 
 Returns (JSON): { total, count, offset, has_more, next_offset?, categories, meals[] }
 Returns (Markdown): Formatted meal cards with chef, price, rating, nutrition
 
+Each meal carries a list-view projection: name, description, chef, category, price,
+rating, inventory_id, batch_id, stock, is_new, nutrition, and cuisine/diet/protein tags.
+Full ingredients and the nutrition label with daily values come from
+cookunity_get_meal_details.
+
+To scan a whole menu, request it in ONE call (limit: 1000) rather than paging. Pagination
+is applied in memory after the full menu is fetched, so every extra page re-fetches all
+~400 meals and returns a slice — paging multiplies cost instead of reducing it.
+
 Examples:
   - Browse next week's menu: {}
+  - Whole menu in one call: { limit: 1000 }
   - Vegan meals under $12: { diet: "vegan", max_price: 12 }
-  - Page 2: { offset: 20 }
 
 Error Handling:
   - Invalid date format returns validation error
@@ -165,7 +174,10 @@ Error Handling:
             lines.push(formatMealMarkdown(m));
             lines.push("");
           }
-          if (hasMore) lines.push(`*More meals available. Use offset: ${params.offset + paged.length} to see next page.*`);
+          // Points at limit, not offset. Paging re-fetches the whole menu per call, so
+          // steering the reader to the next page contradicts the tool description and costs
+          // them a full extra fetch to read a slice they could have had in this one.
+          if (hasMore) lines.push(`*Showing ${paged.length} of ${total}. Use limit: ${total} to get them all in one call.*`);
           text = lines.join("\n");
         }
 
@@ -185,11 +197,16 @@ Error Handling:
 Args:
   - query (string, required): Search keyword (min 1 char)
   - date (string, optional): YYYY-MM-DD. Defaults to next Monday.
-  - limit (number): Results per page, default 20
+  - limit (number): Results per page, default 20, max 1000
   - offset (number): Pagination offset
   - response_format ('markdown'|'json'): Output format
 
 Returns (JSON): { query, date, total, count, offset, has_more, meals[] }
+
+Searching fetches the whole menu and matches in memory — across name, description,
+ingredients, tags, chef and category. Matched meals come back as the list-view projection,
+which does not carry ingredients; use cookunity_get_meal_details for a meal's ingredient
+list. Since every call re-fetches the full menu, prefer one wide call over paging.
 
 Examples:
   - Find salmon dishes: { query: "salmon" }
@@ -235,7 +252,7 @@ Error Handling:
             lines.push(formatMealMarkdown(m));
             lines.push("");
           }
-          if (hasMore) lines.push(`*Use offset: ${params.offset + paged.length} for more results.*`);
+          if (hasMore) lines.push(`*Showing ${paged.length} of ${total}. Use limit: ${total} to get them all in one call.*`);
           text = lines.join("\n");
         }
 

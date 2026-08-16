@@ -110,6 +110,25 @@ try {
   const diet = await callTool("cookunity_get_menu", { diet: "vegan", limit: 2, response_format: "json" });
   check("diet filter", !diet.failed && totalOf(diet.text) > 0, diet.failed ? diet.text.slice(0, 90) : `${totalOf(diet.text)} vegan meals`);
 
+  // The point of raising MAX_PAGE_SIZE (#1): a whole menu in one call. Asserted through the
+  // MCP layer rather than against the API client, because the cap that mattered lived in the
+  // zod schema — a client-side change alone would leave the tool rejecting the call with a
+  // validation error, which is what a stale server does.
+  //
+  // count === total, not "count is large": a cap silently reapplied downstream returns a
+  // well-formed page whose own `total` still reports the full menu.
+  const wide = await callTool("cookunity_get_menu", { limit: 1000, response_format: "json" });
+  const wideBody = wide.failed ? undefined : parseJson(wide.text);
+  // Report the structured size, not `wide.text.length`. The text is the pretty-printed
+  // `content`, which Claude Code discards; the structured object is what reaches the agent.
+  // Surfacing the wire number here would undercut the distinction verify-menu.mts documents.
+  const wideChars = wideBody ? JSON.stringify(wideBody).length : 0;
+  check(
+    "full menu in a single call",
+    !wide.failed && wideBody?.total > 0 && wideBody?.count === wideBody?.total,
+    wide.failed ? wide.text.slice(0, 120) : `${wideBody?.count}/${wideBody?.total} meals, ${Math.round(wideChars / 1000)}k chars structured`
+  );
+
   const markdown = await callTool("cookunity_get_menu", { limit: 2, response_format: "markdown" });
   check("markdown menu", !markdown.failed && markdown.text.includes("###"), markdown.failed ? markdown.text.slice(0, 90) : `${markdown.text.split("\n").length} lines`);
 

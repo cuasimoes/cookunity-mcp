@@ -19,7 +19,7 @@ export const GetMenuSchema = z.object({
   diet: z.string().optional().describe("Filter by diet tag (e.g. 'gluten-free', 'vegan', 'dairy-free')"),
   max_price: z.number().min(0).optional().describe("Maximum price filter in dollars"),
   min_rating: z.number().min(0).max(5).optional().describe("Minimum rating filter (0-5)"),
-  limit: z.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE).describe("Results per page (max 50)"),
+  limit: z.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE).describe(`Results per page (max ${MAX_PAGE_SIZE}). Paging re-fetches the whole menu each call — to scan a full menu, ask for it in one call rather than paging.`),
   offset: z.number().int().min(0).default(0).describe("Number of results to skip for pagination"),
   response_format: ResponseFormatSchema,
 }).strict();
@@ -27,7 +27,7 @@ export const GetMenuSchema = z.object({
 export const SearchMealsSchema = z.object({
   query: z.string().min(1, "Search query is required").max(200).describe("Keyword to search across meal name, description, cuisine, chef, ingredients, diet tags"),
   date: DateSchema.optional(),
-  limit: z.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE).describe("Results per page"),
+  limit: z.number().int().min(1).max(MAX_PAGE_SIZE).default(DEFAULT_PAGE_SIZE).describe(`Results per page (max ${MAX_PAGE_SIZE})`),
   offset: z.number().int().min(0).default(0).describe("Pagination offset"),
   response_format: ResponseFormatSchema,
 }).strict();

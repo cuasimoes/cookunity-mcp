@@ -155,6 +155,104 @@ try {
   check("getMenuDetailed normalized", false, String(error));
 }
 
+// The list-view field contract (#1).
+//
+// formatMeal is a projection, and this trimmed two fields out of it. That makes the
+// projection a place where a field can go missing without anything throwing — the tool
+// still renders, the cart call just fails later with an empty inventory_id. So assert
+// both directions: what must survive, and what must stay gone.
+const listView = menu.meals.map(formatMeal);
+
+const cartable = listView.filter(
+  (m) => typeof m.inventory_id === "string" && m.inventory_id.length > 0 && Number.isFinite(m.batch_id)
+);
+check(
+  "every meal is addable to a cart",
+  listView.length > 0 && cartable.length === listView.length,
+  `${cartable.length}/${listView.length} carry inventory_id + batch_id`
+);
+
+// The only signal for new-this-week meals — there is no category or filter for them.
+// A passthrough, not a coercion, so an upstream rename lands here as null.
+const flagged = listView.filter((m) => typeof m.is_new === "boolean");
+check(
+  "is_new is a boolean on every meal",
+  flagged.length === listView.length,
+  `${listView.filter((m) => m.is_new).length} new this week`
+);
+
+// 404/404 meals carry a cuisine, so the assertion is that none lack one. An earlier
+// version allowed any non-zero count, which passed with 1 meal of 404 tagged — a 99.75%
+// loss reading as green. When the data supports an exact bound, use it.
+const noCuisine = listView.filter((m) => m.tags.cuisines.length === 0);
+check(
+  "cuisine survives the projection",
+  listView.length > 0 && noCuisine.length === 0,
+  `${listView.length - noCuisine.length}/${listView.length} meals tagged`
+);
+
+// The projection's exact key set, asserted in both directions at once.
+//
+// A ceiling only ever catches growth: gutting six fields drops the payload to 366
+// chars/meal and sails under any budget. Naming the two removed fields only catches those
+// two. Exact equality is the one assertion that nets the whole class — every field that
+// vanishes and every field that comes back, without enumerating failure modes.
+//
+// `formatMeal` returns an object literal, so every meal shares a key set; checking the
+// first is sufficient.
+const EXPECTED_KEYS = [
+  "id", "name", "description", "chef", "category", "price", "original_price", "rating",
+  "inventory_id", "batch_id", "in_stock", "stock", "is_new", "nutrition", "tags", "meat_type",
+];
+const EXPECTED_TAG_KEYS = ["cuisines", "diet_tags", "protein_tags"];
+
+const keyDiff = (expected: string[], actual: string[]) => [
+  ...expected.filter((k) => !actual.includes(k)).map((k) => `-${k}`),
+  ...actual.filter((k) => !expected.includes(k)).map((k) => `+${k}`),
+];
+const drift = [
+  ...keyDiff(EXPECTED_KEYS, Object.keys(listView[0] ?? {})),
+  ...keyDiff(EXPECTED_TAG_KEYS, Object.keys(listView[0]?.tags ?? {})).map((k) => `tags.${k}`),
+];
+check(
+  "list-view key set is exact",
+  listView.length > 0 && drift.length === 0,
+  drift.length === 0 ? `${EXPECTED_KEYS.length} fields, ${EXPECTED_TAG_KEYS.length} tags` : drift.join(" ")
+);
+
+// Key presence does not catch a field that is present but emptied or wired to the wrong
+// source. diet_tags is the field most worth guarding that way: it is the largest surviving
+// one, and it is what makes a diet-filtered result explainable — without it you get matches
+// with no way to see why they matched.
+//
+// Asserted as passthrough fidelity against the source rather than as a coverage floor:
+// 403/404 meals carry diet tags, so any percentage bound would be arbitrary, and one that
+// tolerated the natural gap would also tolerate real loss.
+const dietDrift = listView.filter(
+  (m, i) => m.tags.diet_tags.length !== menu.meals[i].searchBy.dietTags.length
+);
+check(
+  "diet_tags passes through intact",
+  dietDrift.length === 0,
+  `${listView.filter((m) => m.tags.diet_tags.length > 0).length}/${listView.length} meals tagged`
+);
+
+// The scalar fields a proposal is built from. All are 404/404 on the live menu, so an
+// empty one means the projection broke, not that the menu is sparse. `description` and
+// `meat_type` are deliberately absent — both have real gaps upstream (397 and 395 of 404).
+const emptyScalar = listView.filter(
+  (m) =>
+    m.name.trim() === "" ||
+    m.chef.trim() === "" ||
+    m.category.trim() === "" ||
+    m.nutrition?.calories == null
+);
+check(
+  "core scalar fields are populated",
+  listView.length > 0 && emptyScalar.length === 0,
+  `${listView.length - emptyScalar.length}/${listView.length} meals with name, chef, category, calories`
+);
+
 // Payload sizing — the baseline issue #1 is measured against.
 //
 // Measure the real `output` object that cookunity_get_menu builds, not a bare array of
@@ -164,7 +262,7 @@ try {
 // discards `content`. structuredContent is therefore the agent-context figure and the one #1
 // is optimising; the content-text line is wire cost only, reported so the distinction stays
 // visible and nobody re-derives it from a single conflated number.
-const formattedAll = menu.meals.map(formatMeal);
+const formattedAll = listView;
 const output = {
   date,
   total: formattedAll.length,
@@ -186,6 +284,20 @@ console.log(
 console.log(
   `content text (pretty, discarded by Claude Code): ` +
     `~${Math.round(textChars / menu.meals.length)} chars/meal, ~${Math.round(textChars / 1000)}k chars`
+);
+
+// A budget, not a target. 576 chars/meal measured on the 2026-08-17 menu after the trim,
+// against 940 before it.
+//
+// This catches unbounded growth *within* the existing fields — a description or tag list
+// that balloons upstream — which the key-set check above cannot see. It is deliberately not
+// the guard for new or removed fields: a reintroduced `image` lands at 677 and passes here,
+// so exact key equality is what carries that case.
+const PER_MEAL_BUDGET = 700;
+check(
+  "list-view payload within budget",
+  perMeal <= PER_MEAL_BUDGET,
+  `${perMeal} chars/meal (budget ${PER_MEAL_BUDGET})`
 );
 
 done();

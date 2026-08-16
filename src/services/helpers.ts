@@ -1,5 +1,4 @@
 import type { Meal, FormattedMeal, UpcomingDay, DeliveryInfo } from "../types.js";
-import { CHARACTER_LIMIT } from "../constants.js";
 
 export function getNextMonday(): string {
   const today = new Date();
@@ -10,6 +9,17 @@ export function getNextMonday(): string {
   return nextMonday.toISOString().split("T")[0];
 }
 
+/**
+ * List-view projection of a meal.
+ *
+ * `structuredContent` is the agent's context cost, so this shape is the cost of browsing
+ * a menu — measured at 940 chars/meal before trimming, ~95k tokens for a full scan
+ * (`npm run probe:payload`). Two fields were dropped as pure payload: `searchBy.ingredients`
+ * (264 chars/meal, 28% of the total — a single space-joined supplier blob) and `image`
+ * (101 chars/meal, a URL no agent can render). Neither had a reader: `searchMeals` matches
+ * ingredients off the raw `Meal`, never this projection. Full ingredients remain available
+ * per-meal via `get_meal_details`.
+ */
 export function formatMeal(meal: Meal): FormattedMeal {
   return {
     id: meal.id,
@@ -25,13 +35,11 @@ export function formatMeal(meal: Meal): FormattedMeal {
     in_stock: meal.stock > 0,
     stock: meal.stock,
     is_new: meal.isNewMeal,
-    image: meal.image,
     nutrition: meal.nutritionalFacts,
     tags: {
       cuisines: meal.searchBy.cuisines,
       diet_tags: meal.searchBy.dietTags,
       protein_tags: meal.searchBy.proteinTags,
-      ingredients: meal.searchBy.ingredients,
     },
     meat_type: meal.meatType,
   };
@@ -105,16 +113,6 @@ export function formatMealMarkdown(m: FormattedMeal): string {
   ];
   if (m.tags.diet_tags.length > 0) lines.push(`🏷️ ${m.tags.diet_tags.join(", ")}`);
   return lines.join("\n");
-}
-
-export function truncateIfNeeded<T>(items: T[], textContent: string): { items: T[]; truncated: boolean; message?: string } {
-  if (textContent.length <= CHARACTER_LIMIT) return { items, truncated: false };
-  const reduced = items.slice(0, Math.max(1, Math.floor(items.length / 2)));
-  return {
-    items: reduced,
-    truncated: true,
-    message: `Response truncated from ${items.length} to ${reduced.length} items. Use offset/limit or filters to see more.`,
-  };
 }
 
 // Type for tool call results compatible with MCP SDK

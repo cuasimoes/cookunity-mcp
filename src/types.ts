@@ -259,13 +259,11 @@ export interface FormattedMeal {
   in_stock: boolean;
   stock: number;
   is_new: boolean;
-  image: string;
   nutrition: NutritionFacts;
   tags: {
     cuisines: string[];
     diet_tags: string[];
     protein_tags: string[];
-    ingredients: string[];
   };
   meat_type: string;
 }
