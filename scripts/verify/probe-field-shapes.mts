@@ -13,10 +13,13 @@
 import axios from "axios";
 import type { AxiosResponse } from "axios";
 import { MENU_SERVICE_URL } from "../../src/constants.js";
-import { getNextMonday } from "../../src/services/helpers.js";
-import { loadToken } from "./_shared.mts";
+import { CookUnityAPI } from "../../src/services/api.js";
+import { resolveDeliveryDay } from "../../src/services/delivery-dates.js";
+import { loadToken, resolveTokenPath } from "./_shared.mts";
 
-const date = process.argv[2] ?? getNextMonday();
+// Without an argument this needs a working delivery calendar and an editable delivery. This
+// probe is for when the API has broken — if the calendar is what broke, pass a date.
+const date = process.argv[2] ?? (await resolveDeliveryDay(new CookUnityAPI({ tokenFile: resolveTokenPath() }))).date;
 const token = loadToken();
 
 const query = `

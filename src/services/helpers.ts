@@ -1,14 +1,5 @@
 import type { Meal, FormattedMeal, UpcomingDay, DeliveryInfo } from "../types.js";
 
-export function getNextMonday(): string {
-  const today = new Date();
-  const dayOfWeek = today.getDay();
-  const daysUntilMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  const nextMonday = new Date(today);
-  nextMonday.setDate(today.getDate() + daysUntilMonday);
-  return nextMonday.toISOString().split("T")[0];
-}
-
 /**
  * List-view projection of a meal.
  *
@@ -88,7 +79,10 @@ export function formatDelivery(day: UpcomingDay): DeliveryInfo {
   }));
 
   return {
-    date: day.displayDate,
+    // `date`, not `displayDate`: this is the value callers copy into every date-taking tool,
+    // and those resolve on `date`. The two have always matched, but a divergence would
+    // otherwise reject every date this tool hands out.
+    date: day.date,
     status,
     can_edit: day.canEdit,
     menu_available: day.menuAvailable,

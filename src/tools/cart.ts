@@ -20,8 +20,8 @@ Args:
 Returns: Confirmation with updated quantity
 
 Examples:
-  - Add one meal: { date: "2025-02-24", inventory_id: "ABC123" }
-  - Add 2 portions: { date: "2025-02-24", inventory_id: "ABC123", quantity: 2 }
+  - Add one meal: { date: "<a date from cookunity_list_deliveries>", inventory_id: "ABC123" }
+  - Add 2 portions: { date: "<a date from cookunity_list_deliveries>", inventory_id: "ABC123", quantity: 2 }
 
 Error Handling:
   - Invalid inventory_id: API returns error

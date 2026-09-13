@@ -4,7 +4,8 @@ import { GetPriceBreakdownSchema } from "../schemas/index.js";
 import type { GetPriceBreakdownInput } from "../schemas/index.js";
 import type { MealInput } from "../types.js";
 import { ResponseFormat } from "../constants.js";
-import { getNextMonday, handleError, toStructured } from "../services/helpers.js";
+import { handleError, toStructured } from "../services/helpers.js";
+import { resolveDeliveryDay } from "../services/delivery-dates.js";
 
 export function registerPricingTools(server: McpServer, api: CookUnityAPI): void {
   server.registerTool(
@@ -14,7 +15,7 @@ export function registerPricingTools(server: McpServer, api: CookUnityAPI): void
       description: `Get a full price breakdown for a delivery including subtotal, taxes, delivery fee, discounts, and total.
 
 Args:
-  - date (string, optional): YYYY-MM-DD delivery date. Defaults to next Monday.
+  - date (string, optional): YYYY-MM-DD, one of your scheduled deliveries (see cookunity_list_deliveries). Defaults to the nearest delivery you can still edit.
   - meals (array, optional): Meals to price, each with entityId, quantity, inventoryId. If omitted, prices the current cart contents.
   - response_format ('markdown'|'json'): Output format
 
@@ -23,10 +24,11 @@ Returns (JSON): { date, subtotal, taxes, delivery_fee, express_fee, promo_discou
 Returns (Markdown): Formatted order summary with line items and total.
 
 Examples:
-  - Current cart: { date: "2026-02-23" }
-  - Specific meals: { date: "2026-02-23", meals: [{ entityId: 12272, quantity: 1, inventoryId: "ii-135055242" }] }
+  - Current cart for the next editable delivery: {}
+  - Specific meals: { date: "<a date from cookunity_list_deliveries>", meals: [{ entityId: 12272, quantity: 1, inventoryId: "ii-135055242" }] }
 
 Error Handling:
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates
   - If no meals provided and cart is empty, returns error suggesting to add meals first
   - Invalid meal IDs return API error`,
       inputSchema: GetPriceBreakdownSchema,
@@ -39,7 +41,8 @@ Error Handling:
     },
     async (params: GetPriceBreakdownInput) => {
       try {
-        const date = params.date ?? getNextMonday();
+        const day = await resolveDeliveryDay(api, params.date);
+        const date = day.date;
         let meals: MealInput[];
 
         if (params.meals && params.meals.length > 0) {
@@ -49,10 +52,7 @@ Error Handling:
             inventoryId: m.inventoryId,
           }));
         } else {
-          // Get current cart contents
-          const days = await api.getUpcomingDays();
-          const day = days.find((d) => d.date === date || d.displayDate === date);
-          if (!day || !day.cart || day.cart.length === 0) {
+          if (!day.cart || day.cart.length === 0) {
             return {
               content: [{
                 type: "text" as const,

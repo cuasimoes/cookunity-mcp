@@ -10,11 +10,12 @@
  *   npm run probe:payload -- 2026-09-13
  */
 import { CookUnityAPI } from "../../src/services/api.js";
-import { formatMeal, getNextMonday } from "../../src/services/helpers.js";
+import { formatMeal } from "../../src/services/helpers.js";
+import { resolveDeliveryDay } from "../../src/services/delivery-dates.js";
 import { resolveTokenPath } from "./_shared.mts";
 
-const date = process.argv[2] ?? getNextMonday();
 const api = new CookUnityAPI({ tokenFile: resolveTokenPath() });
+const date = process.argv[2] ?? (await resolveDeliveryDay(api)).date;
 
 const menu = await api.getMenu(date);
 const formatted = menu.meals.map(formatMeal);

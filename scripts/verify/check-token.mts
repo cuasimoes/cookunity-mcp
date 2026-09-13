@@ -10,7 +10,6 @@
 import fs from "fs";
 import { CookUnityAuth } from "../../src/services/auth.js";
 import { CookUnityAPI } from "../../src/services/api.js";
-import { getNextMonday } from "../../src/services/helpers.js";
 import { resolveTokenPath } from "./_shared.mts";
 
 const tokenFile = resolveTokenPath();
@@ -41,8 +40,9 @@ console.log(`expires    : ${new Date(expiresAt).toLocaleString()} (${minutesLeft
 // The local exp claim only proves the token has not aged out; the server can still refuse it.
 const api = new CookUnityAPI({ tokenFile });
 try {
-  const menu = await api.getMenu(getNextMonday());
-  console.log(`\nSTATUS: WORKING — live call returned ${menu.meals.length} meals`);
+  // Any authenticated call proves the token; the delivery calendar needs no date to ask it.
+  const days = await api.getUpcomingDays();
+  console.log(`\nSTATUS: WORKING — live call returned ${days.length} delivery slots`);
 } catch (error) {
   console.log(`\nSTATUS: REJECTED BY SERVER — ${error instanceof Error ? error.message : String(error)}`);
   console.log("The exp claim is still in the future, so this is a revocation rather than expiry.");
