@@ -78,12 +78,21 @@ if (!select) {
     day("2026-01-10", { canEdit: false }), // today, locked
     day("2026-01-11", { scheduled: false }), // unscheduled slot
     day("2026-01-12", { skip: true }), // skipped
-    day("2026-01-17"), // first editable, non-skipped
+    day("2026-01-14", { isPaused: true }), // paused
+    day("2026-01-17"), // first editable, received
     day("2026-01-24"),
   ];
   const T = "2026-01-10";
+  const message = (fn: () => unknown) => {
+    try {
+      fn();
+      return "";
+    } catch (error) {
+      return error instanceof Error ? error.message : String(error);
+    }
+  };
 
-  check("default skips locked, unscheduled and skipped days", select(fixture, undefined, T).date === "2026-01-17");
+  check("default skips locked, unscheduled, skipped and paused days", select(fixture, undefined, T).date === "2026-01-17");
   check("default is order-independent", select([...fixture].reverse(), undefined, T).date === "2026-01-17");
   check("default never returns a past day", throws(() => select([day("2026-01-03")], undefined, T)));
   check("explicit skipped day is accepted", select(fixture, "2026-01-12", T).date === "2026-01-12");
@@ -91,6 +100,19 @@ if (!select) {
   check("explicit unscheduled slot is rejected", throws(() => select(fixture, "2026-01-11", T)));
   check("explicit date outside the window is rejected", throws(() => select(fixture, "2026-03-01", T)));
   check("no editable delivery throws rather than guessing", throws(() => select([day("2026-01-10", { canEdit: false })], undefined, T)));
+  check("matches date, not displayDate", throws(() => select([day("2026-01-17", { displayDate: "2026-01-18" })], "2026-01-18", T)));
+
+  const rejection = message(() => select(fixture, "2026-01-11", T));
+  check("rejection lists upcoming dates, not past ones", rejection.includes("2026-01-17") && !rejection.includes("2026-01-03"), rejection.slice(0, 100));
+
+  // localToday must read the local calendar. 07:30 UTC on the 11th is still the evening of the
+  // 10th in Los Angeles; toISOString() would say the 11th. Node honours a runtime TZ change.
+  const localToday = helpers.localToday as ((now?: Date) => string) | undefined;
+  const savedTz = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+  check("localToday uses the local calendar, not UTC", localToday?.(new Date("2026-01-11T07:30:00Z")) === "2026-01-10");
+  process.env.TZ = savedTz;
+  if (savedTz === undefined) delete process.env.TZ;
 }
 
 // ── Live tools ──
