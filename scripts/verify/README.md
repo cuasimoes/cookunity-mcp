@@ -15,9 +15,14 @@ assert against whatever the menu returns today.
 | `npm run probe:nutrition` | Which nutrition fields exist? Server introspection is off, so this classifies validation errors to tell absent fields from merely-unselected ones. |
 | `npm run verify:menu` | Does `normalizeMeal` hold, and do the previously-throwing paths work? |
 | `npm run verify:smoke` | Does the built server boot, authenticate, and serve tool calls? |
+| `npm run verify:dates` | Do date-taking tools default to your next editable delivery and reject dates you haven't scheduled? Read-only. |
 
-All four read the token from `COOKUNITY_TOKEN_FILE`, falling back to `.token` in the repo
-root. Start with `verify:token` — the other three fail confusingly against a dead token.
+All of them read the token from `COOKUNITY_TOKEN_FILE`, falling back to `.token` in the repo
+root. Start with `verify:token` — the rest fail confusingly against a dead token.
+
+Scripts that take an optional date resolve a missing one through the delivery calendar, so
+they need a working calendar and an editable delivery. When the calendar is what broke, pass
+a date explicitly (`npm run probe:fields -- 2026-09-27`).
 
 ## Handling the token
 

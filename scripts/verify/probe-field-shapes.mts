@@ -17,6 +17,8 @@ import { CookUnityAPI } from "../../src/services/api.js";
 import { resolveDeliveryDay } from "../../src/services/delivery-dates.js";
 import { loadToken, resolveTokenPath } from "./_shared.mts";
 
+// Without an argument this needs a working delivery calendar and an editable delivery. This
+// probe is for when the API has broken — if the calendar is what broke, pass a date.
 const date = process.argv[2] ?? (await resolveDeliveryDay(new CookUnityAPI({ tokenFile: resolveTokenPath() }))).date;
 const token = loadToken();
 

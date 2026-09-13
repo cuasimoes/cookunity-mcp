@@ -16,6 +16,8 @@ import { CookUnityAPI } from "../../src/services/api.js";
 import { registerMenuTools } from "../../src/tools/menu.js";
 import { registerDeliveryTools } from "../../src/tools/deliveries.js";
 import { registerPricingTools } from "../../src/tools/pricing.js";
+import { localToday, selectDeliveryDay as select } from "../../src/services/delivery-dates.js";
+import { formatDelivery } from "../../src/services/helpers.js";
 import type { UpcomingDay } from "../../src/types.js";
 import { resolveTokenPath, makeCheck } from "./_shared.mts";
 
@@ -47,21 +49,9 @@ const call = async (name: string, args: Record<string, unknown>) => {
   return { failed: result.isError === true, text: body ? text.replace(/\s+/g, " ") : text, body };
 };
 
-// Local calendar date. Deliveries are local-calendar days; UTC runs a day ahead every evening
-// in the Americas, which would drop a same-day delivery from "upcoming".
-const now = new Date();
-const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
 // ── Pure selection rule, on synthetic days (states the live account can't be put in) ──
 
-const helpers: Record<string, any> = await import("../../src/services/delivery-dates.js").catch(() => ({}));
-const select = helpers.selectDeliveryDay as
-  | ((days: UpcomingDay[], requested: string | undefined, today: string) => UpcomingDay)
-  | undefined;
-
-if (!select) {
-  check("selectDeliveryDay exported from services/delivery-dates", false);
-} else {
+{
   const day = (date: string, over: Partial<UpcomingDay> = {}): UpcomingDay =>
     ({ id: date, date, displayDate: date, scheduled: true, skip: false, isPaused: false, canEdit: true, available: true, menuAvailable: true, cutoff: null, cart: [], order: null, recommendation: null, ...over }) as UpcomingDay;
   const throws = (fn: () => unknown) => {
@@ -101,17 +91,19 @@ if (!select) {
   check("explicit date outside the window is rejected", throws(() => select(fixture, "2026-03-01", T)));
   check("no editable delivery throws rather than guessing", throws(() => select([day("2026-01-10", { canEdit: false })], undefined, T)));
   check("matches date, not displayDate", throws(() => select([day("2026-01-17", { displayDate: "2026-01-18" })], "2026-01-18", T)));
+  // The other half of that contract: list_deliveries must hand out the field the resolver reads.
+  // Live slots never diverge, so only a synthetic day can make this fail.
+  check("formatDelivery emits date, not displayDate", formatDelivery(day("2026-01-17", { displayDate: "2026-01-18" })).date === "2026-01-17");
 
   const rejection = message(() => select(fixture, "2026-01-11", T));
   check("rejection lists upcoming dates, not past ones", rejection.includes("2026-01-17") && !rejection.includes("2026-01-03"), rejection.slice(0, 100));
 
   // localToday must read the local calendar. 07:30 UTC on the 11th is still the evening of the
   // 10th in Los Angeles; toISOString() would say the 11th. Node honours a runtime TZ change.
-  const localToday = helpers.localToday as ((now?: Date) => string) | undefined;
   const savedTz = process.env.TZ;
   process.env.TZ = "America/Los_Angeles";
   try {
-    check("localToday uses the local calendar, not UTC", localToday?.(new Date("2026-01-11T07:30:00Z")) === "2026-01-10");
+    check("localToday uses the local calendar, not UTC", localToday(new Date("2026-01-11T07:30:00Z")) === "2026-01-10");
   } finally {
     // The live checks below compute "today" locally; a leaked TZ would skew them.
     if (savedTz === undefined) delete process.env.TZ;
@@ -121,10 +113,16 @@ if (!select) {
 
 // ── Live tools ──
 
+// The rule itself is proven by the synthetic section above; the live section proves the tools
+// are wired to it. So the expectation comes from the rule rather than a second copy of it.
+const today = localToday();
 const days = await api.getUpcomingDays();
-const expected = days
-  .filter((d) => d.scheduled && !d.skip && d.canEdit && d.date >= today)
-  .sort((a, b) => a.date.localeCompare(b.date))[0];
+let expected: UpcomingDay | undefined;
+try {
+  expected = select(days, undefined, today);
+} catch {
+  expected = undefined;
+}
 // Editable, with a menu: the slot a caller could actually build a doomed cart against.
 const unbooked = days.find((d) => !d.scheduled && d.menuAvailable && d.canEdit && d.date >= today);
 
@@ -170,6 +168,11 @@ for (const date of listedDates) {
   if ((await call("cookunity_get_cart", { date })).failed) refused.push(date);
 }
 check("every list_deliveries date is accepted by get_cart", listedDates.length > 0 && refused.length === 0, refused.length ? `refused ${refused.join(", ")}` : `${listedDates.length} dates`);
+
+// Past deliveries stay valid to request, so a caller taking the first listed date would read
+// last week's menu without error. The list must start at today.
+const past = listedDates.filter((d) => d < today);
+check("list_deliveries omits past deliveries", past.length === 0, past.length ? `listed ${past.join(", ")}` : `first ${listedDates[0]}`);
 
 // Rejections: an unbooked slot must fail loudly and point at a real date. Asserting the error
 // names a scheduled date, not just isError — a generic API failure would also set isError.

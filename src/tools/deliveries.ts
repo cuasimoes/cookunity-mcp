@@ -49,8 +49,11 @@ Error Handling:
     async (params: ListDeliveriesInput) => {
       try {
         const days = await api.getUpcomingDays();
-        // Filter to scheduled delivery days only
-        const scheduledDays = days.filter((d) => d.scheduled);
+        // Scheduled and not yet past. Every date-taking tool tells callers to copy dates from
+        // here, and past deliveries are still accepted — listing last week first invites
+        // reading a menu for a week that has already been delivered.
+        const today = localToday();
+        const scheduledDays = days.filter((d) => d.scheduled && d.date >= today);
         const deliveries = scheduledDays.map(formatDelivery);
 
         const output = { total: deliveries.length, deliveries };
@@ -273,9 +276,10 @@ Returns: The nearest delivery with date, status, meals (from order, cart, or rec
         const days = await api.getUpcomingDays();
         const today = localToday();
 
-        // Find the nearest scheduled, non-skipped delivery (including today)
+        // Nearest scheduled delivery that will actually arrive (including today). Paused matches
+        // the date-resolver default, so this and `get_cart {}` never disagree on a paused week.
         const next = days
-          .filter((d) => d.scheduled && !d.skip && d.date >= today)
+          .filter((d) => d.scheduled && !d.skip && !d.isPaused && d.date >= today)
           .sort((a, b) => a.date.localeCompare(b.date))[0];
 
         if (!next) {
