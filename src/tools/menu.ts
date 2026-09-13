@@ -4,7 +4,8 @@ import { GetMenuSchema, SearchMealsSchema, GetMealDetailsSchema } from "../schem
 import type { GetMenuInput, SearchMealsInput, GetMealDetailsInput } from "../schemas/index.js";
 import type { DetailedMeal } from "../types.js";
 import { ResponseFormat } from "../constants.js";
-import { getNextMonday, formatMeal, formatMealMarkdown, handleError, toStructured } from "../services/helpers.js";
+import { formatMeal, formatMealMarkdown, handleError, toStructured } from "../services/helpers.js";
+import { fetchForDelivery } from "../services/delivery-dates.js";
 import { nutrientsByName, canonicalNutrientName } from "../services/nutrition.js";
 
 /**
@@ -86,7 +87,7 @@ export function registerMenuTools(server: McpServer, api: CookUnityAPI): void {
       description: `Browse available meals for a delivery date with optional filters and pagination.
 
 Args:
-  - date (string, optional): YYYY-MM-DD delivery date. Defaults to next Monday.
+  - date (string, optional): YYYY-MM-DD, one of your scheduled deliveries (see cookunity_list_deliveries). Defaults to the nearest delivery you can still edit.
   - category (string, optional): Filter by category (e.g. 'Bowls', 'Protein+')
   - diet (string, optional): Filter by diet tag (e.g. 'vegan', 'gluten-free')
   - max_price (number, optional): Max price in dollars
@@ -108,12 +109,13 @@ is applied in memory after the full menu is fetched, so every extra page re-fetc
 ~400 meals and returns a slice — paging multiplies cost instead of reducing it.
 
 Examples:
-  - Browse next week's menu: {}
+  - Menu for the next editable delivery: {}
   - Whole menu in one call: { limit: 1000 }
   - Vegan meals under $12: { diet: "vegan", max_price: 12 }
 
 Error Handling:
   - Invalid date format returns validation error
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates
   - API failures return actionable error with status code`,
       inputSchema: GetMenuSchema,
       annotations: {
@@ -125,8 +127,7 @@ Error Handling:
     },
     async (params: GetMenuInput) => {
       try {
-        const date = params.date ?? getNextMonday();
-        const menu = await api.getMenu(date);
+        const { date, data: menu } = await fetchForDelivery(api, params.date, (d) => api.getMenu(d));
         let meals = menu.meals;
 
         // Apply filters
@@ -196,7 +197,7 @@ Error Handling:
 
 Args:
   - query (string, required): Search keyword (min 1 char)
-  - date (string, optional): YYYY-MM-DD. Defaults to next Monday.
+  - date (string, optional): YYYY-MM-DD, one of your scheduled deliveries (see cookunity_list_deliveries). Defaults to the nearest delivery you can still edit.
   - limit (number): Results per page, default 20, max 1000
   - offset (number): Pagination offset
   - response_format ('markdown'|'json'): Output format
@@ -214,7 +215,8 @@ Examples:
   - Chef search: { query: "Mario" }
 
 Error Handling:
-  - Empty query returns validation error`,
+  - Empty query returns validation error
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates`,
       inputSchema: SearchMealsSchema,
       annotations: {
         readOnlyHint: true,
@@ -225,8 +227,7 @@ Error Handling:
     },
     async (params: SearchMealsInput) => {
       try {
-        const date = params.date ?? getNextMonday();
-        const results = await api.searchMeals(params.query, date);
+        const { date, data: results } = await fetchForDelivery(api, params.date, (d) => api.searchMeals(params.query, d));
         const total = results.length;
         const paged = results.slice(params.offset, params.offset + params.limit);
         const formatted = paged.map(formatMeal);
@@ -272,7 +273,7 @@ Error Handling:
 Args:
   - meal_id (number, optional): Numeric meal ID (e.g. 12272)
   - inventory_id (string, optional): Inventory ID (e.g. "ii-135055242")
-  - date (string, optional): YYYY-MM-DD menu date. Defaults to next Monday.
+  - date (string, optional): YYYY-MM-DD, one of your scheduled deliveries (see cookunity_list_deliveries). Defaults to the nearest delivery you can still edit.
   - response_format ('markdown'|'json'): Output format
 
 At least one of meal_id or inventory_id is required.
@@ -291,10 +292,11 @@ Returns (Markdown): Formatted card with sections for Description, Nutrition, Ing
 Examples:
   - By ID: { meal_id: 12272 }
   - By inventory: { inventory_id: "ii-135055242" }
-  - Specific week: { meal_id: 12272, date: "2026-02-23" }
+  - Specific week: { meal_id: 12272, date: "<a date from cookunity_list_deliveries>" }
 
 Error Handling:
-  - Meal not found: suggests checking the date or using cookunity_search_meals`,
+  - Meal not found: suggests checking the date or using cookunity_search_meals
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates`,
       inputSchema: GetMealDetailsSchema,
       annotations: {
         readOnlyHint: true,
@@ -305,8 +307,7 @@ Error Handling:
     },
     async (params: GetMealDetailsInput) => {
       try {
-        const date = params.date ?? getNextMonday();
-        const meals = await api.getMenuDetailed(date);
+        const { date, data: meals } = await fetchForDelivery(api, params.date, (d) => api.getMenuDetailed(d));
 
         const meal = meals.find((m) => {
           if (params.meal_id !== undefined && String(m.id) === String(params.meal_id)) return true;

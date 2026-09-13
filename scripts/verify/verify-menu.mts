@@ -8,12 +8,13 @@
  *   npm run verify:menu
  */
 import { CookUnityAPI } from "../../src/services/api.js";
-import { formatMeal, formatMealMarkdown, getNextMonday, toStructured } from "../../src/services/helpers.js";
+import { formatMeal, formatMealMarkdown, toStructured } from "../../src/services/helpers.js";
+import { resolveDeliveryDay } from "../../src/services/delivery-dates.js";
 import { nutrientsByName } from "../../src/services/nutrition.js";
 import { resolveTokenPath, makeCheck } from "./_shared.mts";
 
-const date = process.argv[2] ?? getNextMonday();
 const api = new CookUnityAPI({ tokenFile: resolveTokenPath() });
+const date = process.argv[2] ?? (await resolveDeliveryDay(api)).date;
 const { check, done } = makeCheck();
 
 const menu = await api.getMenu(date);

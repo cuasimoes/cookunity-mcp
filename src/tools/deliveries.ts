@@ -15,7 +15,8 @@ import type {
   NextDeliveryInput,
 } from "../schemas/index.js";
 import { ResponseFormat } from "../constants.js";
-import { getNextMonday, formatDelivery, handleError, toStructured } from "../services/helpers.js";
+import { formatDelivery, handleError, toStructured } from "../services/helpers.js";
+import { localToday, resolveDeliveryDay } from "../services/delivery-dates.js";
 
 export function registerDeliveryTools(server: McpServer, api: CookUnityAPI): void {
   server.registerTool(
@@ -99,7 +100,7 @@ Error Handling:
       description: `Get cart contents for a specific delivery date. Always call fresh — NEVER use cached results.
 
 Args:
-  - date (string, optional): YYYY-MM-DD. Defaults to next Monday.
+  - date (string, optional): YYYY-MM-DD, one of your scheduled deliveries (see cookunity_list_deliveries). Defaults to the nearest delivery you can still edit.
   - response_format ('markdown'|'json')
 
 Returns (JSON): { date, can_edit, is_skipped, cutoff, items[{ name, inventory_id, quantity, price, chef }], total_items, total_price }
@@ -107,7 +108,7 @@ Returns (JSON): { date, can_edit, is_skipped, cutoff, items[{ name, inventory_id
 Note: If the order is already confirmed, cart may be empty — use cookunity_list_deliveries or cookunity_next_delivery instead to see confirmed order items.
 
 Error Handling:
-  - Returns "Date not found" if date is not in upcoming deliveries`,
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates`,
       inputSchema: GetCartSchema,
       annotations: {
         readOnlyHint: true,
@@ -118,12 +119,7 @@ Error Handling:
     },
     async (params: GetCartInput) => {
       try {
-        const date = params.date ?? getNextMonday();
-        const days = await api.getUpcomingDays();
-        const day = days.find((d) => d.date === date || d.displayDate === date);
-        if (!day) {
-          return { content: [{ type: "text", text: `Error: Date ${date} not found in upcoming deliveries. Use cookunity_list_deliveries to see available dates.` }], isError: true };
-        }
+        const day = await resolveDeliveryDay(api, params.date);
 
         const items = (day.cart || []).map((c) => ({
           name: c.product?.name ?? "Unknown",
@@ -275,7 +271,7 @@ Returns: The nearest delivery with date, status, meals (from order, cart, or rec
     async (params: NextDeliveryInput) => {
       try {
         const days = await api.getUpcomingDays();
-        const today = new Date().toISOString().split("T")[0];
+        const today = localToday();
 
         // Find the nearest scheduled, non-skipped delivery (including today)
         const next = days

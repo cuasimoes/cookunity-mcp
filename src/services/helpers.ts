@@ -1,14 +1,5 @@
 import type { Meal, FormattedMeal, UpcomingDay, DeliveryInfo } from "../types.js";
 
-export function getNextMonday(): string {
-  const today = new Date();
-  const dayOfWeek = today.getDay();
-  const daysUntilMonday = dayOfWeek === 0 ? 1 : 8 - dayOfWeek;
-  const nextMonday = new Date(today);
-  nextMonday.setDate(today.getDate() + daysUntilMonday);
-  return nextMonday.toISOString().split("T")[0];
-}
-
 /**
  * List-view projection of a meal.
  *
