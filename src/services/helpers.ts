@@ -79,7 +79,10 @@ export function formatDelivery(day: UpcomingDay): DeliveryInfo {
   }));
 
   return {
-    date: day.displayDate,
+    // `date`, not `displayDate`: this is the value callers copy into every date-taking tool,
+    // and those resolve on `date`. The two have always matched, but a divergence would
+    // otherwise reject every date this tool hands out.
+    date: day.date,
     status,
     can_edit: day.canEdit,
     menu_available: day.menuAvailable,

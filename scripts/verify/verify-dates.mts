@@ -110,9 +110,13 @@ if (!select) {
   const localToday = helpers.localToday as ((now?: Date) => string) | undefined;
   const savedTz = process.env.TZ;
   process.env.TZ = "America/Los_Angeles";
-  check("localToday uses the local calendar, not UTC", localToday?.(new Date("2026-01-11T07:30:00Z")) === "2026-01-10");
-  process.env.TZ = savedTz;
-  if (savedTz === undefined) delete process.env.TZ;
+  try {
+    check("localToday uses the local calendar, not UTC", localToday?.(new Date("2026-01-11T07:30:00Z")) === "2026-01-10");
+  } finally {
+    // The live checks below compute "today" locally; a leaked TZ would skew them.
+    if (savedTz === undefined) delete process.env.TZ;
+    else process.env.TZ = savedTz;
+  }
 }
 
 // ── Live tools ──
@@ -156,6 +160,16 @@ if (meal) {
 } else {
   check("read a meal from the scheduled week", false);
 }
+
+// Round-trip: every date list_deliveries hands out must be accepted back. The tool descriptions
+// tell callers to copy these, so a field mismatch here rejects exactly the dates we advertise.
+const listed = await call("cookunity_list_deliveries", {});
+const listedDates: string[] = (listed.body?.deliveries ?? []).map((d: { date: string }) => d.date);
+const refused: string[] = [];
+for (const date of listedDates) {
+  if ((await call("cookunity_get_cart", { date })).failed) refused.push(date);
+}
+check("every list_deliveries date is accepted by get_cart", listedDates.length > 0 && refused.length === 0, refused.length ? `refused ${refused.join(", ")}` : `${listedDates.length} dates`);
 
 // Rejections: an unbooked slot must fail loudly and point at a real date. Asserting the error
 // names a scheduled date, not just isError — a generic API failure would also set isError.

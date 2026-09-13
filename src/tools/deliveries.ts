@@ -130,7 +130,7 @@ Error Handling:
         }));
 
         const output = {
-          date: day.displayDate,
+          date: day.date,
           can_edit: day.canEdit,
           is_skipped: day.skip,
           cutoff: day.cutoff?.time ?? null,
