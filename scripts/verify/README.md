@@ -15,7 +15,7 @@ assert against whatever the menu returns today.
 | `npm run probe:nutrition` | Which nutrition fields exist? Server introspection is off, so this classifies validation errors to tell absent fields from merely-unselected ones. |
 | `npm run verify:menu` | Does `normalizeMeal` hold, and do the previously-throwing paths work? |
 | `npm run verify:smoke` | Does the built server boot, authenticate, and serve tool calls? |
-| `npm run verify:dates` | Do date-taking tools default to your next editable delivery and reject dates you haven't scheduled? Read-only. |
+| `npm run verify:dates` | Do date-taking tools default to your next editable delivery and reject dates you haven't scheduled — write tools included? Read-only: the write tools run behind a fence (below). |
 
 All of them read the token from `COOKUNITY_TOKEN_FILE`, falling back to `.token` in the repo
 root. Start with `verify:token` — the rest fail confusingly against a dead token.
@@ -34,6 +34,13 @@ without checking its shape first.** A `SyntaxError` echoes part of the input it 
 parsing a raw JWT puts credential material into the error message and any log that captures
 it. `loadToken` in `_shared.mts` does this correctly — reuse it rather than re-reading the
 file. `smoke-mcp.mts` also asserts that nothing JWT-shaped reaches stderr.
+
+## Write tools: fenced only
+
+No script may make an account write — cart, confirm, skip or unskip. A script may still drive
+the write *tools*, but only against the fenced API in `verify-dates.mts`: a proxy whose mutation
+methods record the call and throw instead of sending it. It proves the fence on every method
+before registering a tool against it. Reuse that pattern; never hand a write tool the real API.
 
 ## When they earn their keep
 

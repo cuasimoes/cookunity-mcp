@@ -1,5 +1,5 @@
 /**
- * Do date-taking tools resolve against the account's scheduled deliveries? (issue #12)
+ * Do date-taking tools resolve against the account's scheduled deliveries? (issues #12, #14)
  *
  * The failure this guards is silent: the menu API serves a complete, plausible menu for any
  * real delivery slot, including the ~6 in 7 days the user has not scheduled. So "no error" is
@@ -8,7 +8,8 @@
  *
  * Handlers are driven in-process through a capturing stand-in for McpServer, with args parsed
  * by each tool's own zod schema so defaults apply as they would over MCP. Read-only: the only
- * non-query call is get_price_breakdown, which prices meals without touching the cart.
+ * non-query call is get_price_breakdown, which prices meals without touching the cart. The
+ * write tools run against a fenced API whose mutation methods throw before any request is made.
  *
  *   npm run verify:dates
  */
@@ -16,6 +17,7 @@ import { CookUnityAPI } from "../../src/services/api.js";
 import { registerMenuTools } from "../../src/tools/menu.js";
 import { registerDeliveryTools } from "../../src/tools/deliveries.js";
 import { registerPricingTools } from "../../src/tools/pricing.js";
+import { registerCartTools } from "../../src/tools/cart.js";
 import { localToday, selectDeliveryDay as select } from "../../src/services/delivery-dates.js";
 import { formatDelivery } from "../../src/services/helpers.js";
 import type { UpcomingDay } from "../../src/types.js";
@@ -184,5 +186,84 @@ rejects("search_meals", await call("cookunity_search_meals", { query: "chicken",
 rejects("get_cart", await call("cookunity_get_cart", { date: unbooked!.date }));
 rejects("get_meal_details", await call("cookunity_get_meal_details", { inventory_id: meal?.inventory_id ?? "ii-0", date: unbooked!.date }));
 rejects("get_price_breakdown", await call("cookunity_get_price_breakdown", { date: unbooked!.date, meals: priceMeals }));
+
+// ── Write tools, behind a fence (issue #14) ──
+
+// The write tools run against a proxy whose mutation methods throw instead of calling the API,
+// so this script cannot change the account even when a guard is missing. The fence doubles as
+// the probe: a write that reached it is a write the guard let through.
+const WRITE_METHODS = new Set(["addMeal", "removeMeal", "clearCart", "createOrder", "skipDelivery", "unskipDelivery"]);
+const attempts: { method: string; date: unknown }[] = [];
+const fenced = new Proxy(api, {
+  get(target, prop, receiver) {
+    if (typeof prop === "string" && WRITE_METHODS.has(prop)) {
+      return async (date: unknown) => {
+        attempts.push({ method: prop, date });
+        throw new Error(`fenced: ${prop} blocked by verify-dates`);
+      };
+    }
+    const value = Reflect.get(target, prop, receiver);
+    return typeof value === "function" ? value.bind(target) : value;
+  },
+});
+
+// Prove the fence holds before handing it anything that writes. Every method, not a sample:
+// one that slipped through would be a real account write.
+for (const method of WRITE_METHODS) {
+  const before = attempts.length;
+  let blocked = false;
+  try {
+    await (fenced as unknown as Record<string, (d: string) => Promise<unknown>>)[method]("1970-01-01");
+  } catch (error) {
+    blocked = error instanceof Error && error.message.startsWith("fenced:");
+  }
+  if (!blocked || attempts.length !== before + 1) {
+    check(`fence intercepts ${method}`, false);
+    done();
+  }
+}
+attempts.length = 0;
+check("fence intercepts every write method", true, [...WRITE_METHODS].join(", "));
+
+const writeHandlers = new Map<string, Handler>();
+const writeCapture = {
+  registerTool: (name: string, config: { inputSchema: { parse: (a: unknown) => any } }, handler: (p: any) => Promise<ToolResult>) => {
+    writeHandlers.set(name, (args) => handler(config.inputSchema.parse(args)));
+  },
+};
+registerCartTools(writeCapture as never, fenced);
+registerDeliveryTools(writeCapture as never, fenced);
+
+const callWrite = async (name: string, args: Record<string, unknown>) => {
+  attempts.length = 0;
+  const result = await writeHandlers.get(name)!(args);
+  const text = (result.content[0]?.text ?? "").replace(/\s+/g, " ");
+  return { failed: result.isError === true, text, reached: attempts.map((a) => a.method) };
+};
+
+const inventoryId = meal?.inventory_id ?? "ii-0";
+const writeCases: { tool: string; method: string; args: (date: string) => Record<string, unknown> }[] = [
+  { tool: "cookunity_add_to_cart", method: "addMeal", args: (date) => ({ date, inventory_id: inventoryId }) },
+  { tool: "cookunity_remove_from_cart", method: "removeMeal", args: (date) => ({ date, inventory_id: inventoryId }) },
+  { tool: "cookunity_clear_cart", method: "clearCart", args: (date) => ({ date }) },
+  { tool: "cookunity_confirm_order", method: "createOrder", args: (date) => ({ date }) },
+  { tool: "cookunity_skip_delivery", method: "skipDelivery", args: (date) => ({ date }) },
+  { tool: "cookunity_unskip_delivery", method: "unskipDelivery", args: (date) => ({ date }) },
+];
+
+// Rejection: refused before any write, with an error that names a real scheduled date.
+for (const c of writeCases) {
+  const r = await callWrite(c.tool, c.args(unbooked!.date));
+  const ok = r.failed && r.reached.length === 0 && r.text.includes(expected!.date);
+  check(`${c.tool.replace("cookunity_", "")} rejects unbooked ${unbooked!.date} before writing`, ok, r.reached.length ? `reached ${r.reached.join(", ")}` : r.text.slice(0, 120));
+}
+
+// Acceptance: a scheduled date gets past the guard to its write. confirm_order is the exception —
+// with an empty cart it stops short of createOrder, so its own empty-cart refusal is the pass.
+for (const c of writeCases) {
+  const r = await callWrite(c.tool, c.args(expected!.date));
+  const passedGuard = r.reached.includes(c.method) || (c.method === "createOrder" && r.text.includes("Cart is empty"));
+  check(`${c.tool.replace("cookunity_", "")} accepts scheduled ${expected!.date}`, passedGuard, r.reached.length ? `reached ${r.reached.join(", ")}` : r.text.slice(0, 120));
+}
 
 done();
