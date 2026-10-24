@@ -10,18 +10,12 @@ holds the work order and the standing decisions, not a copy of the backlog.
 
 Ordered. Start from the top unless something else is on fire.
 
-1. **#14** — Cart, confirm and skip tools accept dates you haven't scheduled. The unguarded
-   half of #12: `add_to_cart` has no date check at all, and `confirm_order` / `skip` / `unskip`
-   validate against all ~42 delivery slots instead of the ~6 scheduled ones. A cart built on an
-   unbooked week carries inventory ids that attach to no order. Read tools now reject these
-   dates, so the inconsistency is live. **Not fully AFK-suitable** — the accept path needs
-   attended account writes; a container can only verify the rejections.
-2. **#10** — `get_meal_details` fetches the whole menu to render one meal. Pure token waste,
+1. **#10** — `get_meal_details` fetches the whole menu to render one meal. Pure token waste,
    no correctness risk. Safe for AFK.
-3. **#5** — Menu response types don't match runtime shapes (`nutritionalFacts` strings,
+2. **#5** — Menu response types don't match runtime shapes (`nutritionalFacts` strings,
    `userRating` null on ~399/401 meals). Low urgency: `/cookunity` already ignores ratings and
    the skill documents the workaround.
-4. **#8** — Typecheck `scripts/`. Blocked: not worth doing until the repo has CI.
+3. **#8** — Typecheck `scripts/`. Blocked: not worth doing until the repo has CI.
 
 ## Settled — do not re-litigate
 
@@ -30,6 +24,10 @@ Ordered. Start from the top unless something else is on fire.
   not merely the nearest, since tomorrow's is usually locked. `services/delivery-dates.ts` is
   the single rule; `getNextMonday()` is deleted. `localToday()` uses the host timezone, which is
   correct while this runs on a Mac and would regress in a UTC container.
+- **Write tools use the same rule** (#14, PR #15, merged 2026-10-24). Cart, confirm, skip and
+  unskip call `resolveDeliveryDay` *before* writing — sequential, never in parallel like
+  `fetchForDelivery`. A skipped week keeps `scheduled: true` (checked live on 2026-11-22: skip,
+  probe, unskip), so unskip needs no special case. Paused weeks are still unverified live.
 - **Token refresh stays manual** (#2). No unattended caller exists to justify automating it.
 - **Menu caching rejected** (2026-08-15). `mealPublic` is cheaper and stateless; break-even is
   ~223 meals inspected per session, far past any real run.
