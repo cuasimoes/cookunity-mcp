@@ -12,10 +12,13 @@ Ordered. Start from the top unless something else is on fire.
 
 1. **#10** — `get_meal_details` fetches the whole menu to render one meal. Pure token waste,
    no correctness risk. Safe for AFK.
-2. **#5** — Menu response types don't match runtime shapes (`nutritionalFacts` strings,
+2. **#16** — `confirm_order` says "cart is empty" on a week that already has an order, which
+   invites adding meals and confirming again. Low urgency: `/cookunity` reads the order from
+   `list_deliveries` first. Safe for AFK — the refusal is verifiable behind the fence.
+3. **#5** — Menu response types don't match runtime shapes (`nutritionalFacts` strings,
    `userRating` null on ~399/401 meals). Low urgency: `/cookunity` already ignores ratings and
    the skill documents the workaround.
-3. **#8** — Typecheck `scripts/`. Blocked: not worth doing until the repo has CI.
+4. **#8** — Typecheck `scripts/`. Blocked: not worth doing until the repo has CI.
 
 ## Settled — do not re-litigate
 
