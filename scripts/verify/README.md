@@ -38,9 +38,11 @@ file. `smoke-mcp.mts` also asserts that nothing JWT-shaped reaches stderr.
 ## Write tools: fenced only
 
 No script may make an account write — cart, confirm, skip or unskip. A script may still drive
-the write *tools*, but only against the fenced API in `verify-dates.mts`: a proxy whose mutation
-methods record the call and throw instead of sending it. It proves the fence on every method
-before registering a tool against it. Reuse that pattern; never hand a write tool the real API.
+the write *tools*, but only against the fenced API in `verify-dates.mts`: a proxy that passes
+an allowlist of read methods and throws on everything else, recording any write it blocks. The
+script fails if `CookUnityAPI` gains a method nobody has classified, and proves the fence on
+every write before registering a tool against it. Reuse that pattern, and register *every* tool
+against the fence — a script that wires write tools to the real API is one typo from a write.
 
 ## When they earn their keep
 
