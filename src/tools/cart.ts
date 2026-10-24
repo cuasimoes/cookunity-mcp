@@ -3,6 +3,7 @@ import type { CookUnityAPI } from "../services/api.js";
 import { AddToCartSchema, RemoveFromCartSchema, ClearCartSchema, ConfirmOrderSchema } from "../schemas/index.js";
 import type { AddToCartInput, RemoveFromCartInput, ClearCartInput, ConfirmOrderInput } from "../schemas/index.js";
 import { handleError, toStructured } from "../services/helpers.js";
+import { resolveDeliveryDay } from "../services/delivery-dates.js";
 
 export function registerCartTools(server: McpServer, api: CookUnityAPI): void {
   server.registerTool(
@@ -24,6 +25,7 @@ Examples:
   - Add 2 portions: { date: "<a date from cookunity_list_deliveries>", inventory_id: "ABC123", quantity: 2 }
 
 Error Handling:
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates
   - Invalid inventory_id: API returns error
   - Past cutoff: API returns error — check cutoff with cookunity_list_deliveries first`,
       inputSchema: AddToCartSchema,
@@ -36,6 +38,9 @@ Error Handling:
     },
     async (params: AddToCartInput) => {
       try {
+        // Validated before the write, not alongside it as the read tools do: a cart line on an
+        // unscheduled slot carries inventory ids that attach to no order.
+        await resolveDeliveryDay(api, params.date);
         const { added, cart } = await api.addMeal(params.date, params.inventory_id, params.quantity, params.batch_id);
         const output = {
           success: true,
@@ -66,6 +71,7 @@ Args:
 Returns: Confirmation with updated quantity
 
 Error Handling:
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates
   - Meal not in cart: API returns error`,
       inputSchema: RemoveFromCartSchema,
       annotations: {
@@ -77,6 +83,7 @@ Error Handling:
     },
     async (params: RemoveFromCartInput) => {
       try {
+        await resolveDeliveryDay(api, params.date);
         const result = await api.removeMeal(params.date, params.inventory_id, params.quantity);
         const output = {
           success: true,
@@ -104,6 +111,7 @@ Args:
 Returns: Confirmation message
 
 Error Handling:
+  - A date that is not a scheduled delivery returns an error listing the scheduled dates
   - Past cutoff: API returns error`,
       inputSchema: ClearCartSchema,
       annotations: {
@@ -115,6 +123,7 @@ Error Handling:
     },
     async (params: ClearCartInput) => {
       try {
+        await resolveDeliveryDay(api, params.date);
         await api.clearCart(params.date);
         const output = { success: true, date: params.date, message: `Cart cleared for ${params.date}.` };
         return { content: [{ type: "text", text: output.message }], structuredContent: toStructured(output) };
@@ -140,7 +149,7 @@ Args:
   - comment (string, optional): Delivery instructions
   - tip (number, optional): Tip amount in dollars
 
-Returns: Order confirmation with ID and payment status, or error with out-of-stock meal IDs
+Returns: Order confirmation with ID and payment status, or error with out-of-stock meal IDs. A date that is not a scheduled delivery returns an error listing the scheduled dates.
 
 Important: Without confirming, cart items are NOT locked in. CookUnity will auto-fill with recommendations at cutoff instead.`,
       inputSchema: ConfirmOrderSchema,
@@ -153,12 +162,7 @@ Important: Without confirming, cart items are NOT locked in. CookUnity will auto
     },
     async (params: ConfirmOrderInput) => {
       try {
-        // Get upcoming days to find cart contents and delivery window
-        const days = await api.getUpcomingDays();
-        const day = days.find((d) => d.date === params.date);
-        if (!day) {
-          return { content: [{ type: "text", text: `No delivery found for ${params.date}. Check available dates with cookunity_list_deliveries.` }], isError: true };
-        }
+        const day = await resolveDeliveryDay(api, params.date);
         if (!day.cart || day.cart.length === 0) {
           return { content: [{ type: "text", text: `Cart is empty for ${params.date}. Add meals first with cookunity_add_to_cart.` }], isError: true };
         }
