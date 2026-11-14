@@ -15,7 +15,8 @@ assert against whatever the menu returns today.
 | `npm run probe:nutrition` | Which nutrition fields exist? Server introspection is off, so this classifies validation errors to tell absent fields from merely-unselected ones. |
 | `npm run verify:menu` | Does `normalizeMeal` hold, and do the previously-throwing paths work? |
 | `npm run verify:smoke` | Does the built server boot, authenticate, and serve tool calls? |
-| `npm run verify:refresh` | Does the stored refresh token still mint access tokens? Spends one refresh (saving a rotated token) and prints derived facts only. Needs `COOKUNITY_REFRESH_TOKEN_FILE`. |
+| `npm run verify:refresh` | Does the stored refresh token still mint access tokens? Spends one refresh (saving a rotated token) and prints derived facts only. Needs `COOKUNITY_REFRESH_TOKEN_FILE` and `COOKUNITY_TOKEN_FILE` (no repo `.token` fallback). |
+| `npm run verify:refresh-offline` | Stubbed refresh cases (rotation, decode failure, odd token shapes, lock, 401 retry). No network, fake tokens. |
 | `npm run verify:dates` | Do date-taking tools default to your next editable delivery and reject dates you haven't scheduled — write tools included? Read-only: the write tools run behind a fence (below). |
 
 All of them read the token from `COOKUNITY_TOKEN_FILE`, falling back to `.token` in the repo

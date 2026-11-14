@@ -33,3 +33,11 @@ export const REFRESH_TOKEN_MAX_LENGTH = 1024;
 
 /** Token files hold bearer credentials: owner read/write only. */
 export const SECRET_FILE_MODE = 0o600;
+
+/** Renew this long before real expiry so a request can't leave with a token that dies in flight. */
+export const TOKEN_EXPIRY_MARGIN_MS = 60000;
+
+/** Cross-process refresh lock: poll interval, give-up time, and age after which a lock is stale. */
+export const REFRESH_LOCK_POLL_MS = 100;
+export const REFRESH_LOCK_WAIT_MS = 30000;
+export const REFRESH_LOCK_STALE_MS = 60000;

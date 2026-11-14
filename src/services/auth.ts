@@ -9,8 +9,9 @@ import {
   AUTH_ORIGIN,
   AUTH_REALM,
   AUTH_TOKEN_TIMEOUT_MS,
+  TOKEN_EXPIRY_MARGIN_MS,
 } from "../constants.js";
-import { readRefreshToken, isRefreshTokenShape, writeSecretFile } from "./token-store.js";
+import { readRefreshToken, isPlausibleRefreshToken, withFileLock, writeSecretFile } from "./token-store.js";
 
 const REDIRECT_URI = "https://www.cookunity.com";
 
@@ -24,8 +25,17 @@ export interface AuthOptions {
 
 export interface RefreshResult {
   expiresAt: number;
-  /** Whether the response carried a new refresh token (rotation). */
+  /** Whether the refresh token the server returned differs from the one we sent. */
   refreshTokenRotated: boolean;
+  /** True when another process had already renewed the token, so no request was made. */
+  skipped?: boolean;
+}
+
+export interface RefreshOptions {
+  /** Refresh even if the token file already holds a usable token (verify scripts). */
+  force?: boolean;
+  /** A token the server just rejected: a file holding the same one is not a renewal. */
+  rejectedToken?: string;
 }
 
 export class CookUnityAuth {
@@ -70,18 +80,49 @@ export class CookUnityAuth {
    * Exchange the stored refresh token for a new access token and persist both.
    * Concurrent calls share one request.
    */
-  refresh(): Promise<RefreshResult> {
-    this.inflightRefresh ??= this.doRefresh().finally(() => {
+  refresh(opts: RefreshOptions = {}): Promise<RefreshResult> {
+    this.inflightRefresh ??= this.doRefresh(opts).finally(() => {
       this.inflightRefresh = null;
     });
     return this.inflightRefresh;
   }
 
-  private async doRefresh(): Promise<RefreshResult> {
+  hasRefreshToken(): boolean {
+    return !!this.refreshTokenFile && !!this.tokenFile;
+  }
+
+  /** The server rejected the cached token (revoked before `exp`): drop it and renew. */
+  async refreshAfterRejection(rejectedToken: string): Promise<void> {
+    this.tokens = null;
+    await this.refresh({ rejectedToken });
+  }
+
+  private async doRefresh(opts: RefreshOptions): Promise<RefreshResult> {
     if (!this.refreshTokenFile || !this.tokenFile) {
       throw new Error("Refresh needs both COOKUNITY_REFRESH_TOKEN_FILE and COOKUNITY_TOKEN_FILE.");
     }
-    const refreshToken = readRefreshToken(this.refreshTokenFile);
+    const refreshFile = this.refreshTokenFile;
+    // Every Claude session runs its own server process; the lock keeps them from spending one
+    // rotating refresh token twice.
+    return withFileLock(`${refreshFile}.lock`, async () => {
+      if (!opts.force) {
+        // Another process may have renewed while we waited for the lock.
+        try {
+          this.loadTokenFromFile();
+          if (this.tokens!.access_token !== opts.rejectedToken) {
+            return { expiresAt: this.tokens!.expires_at, refreshTokenRotated: false, skipped: true };
+          }
+        } catch {
+          // still missing or expired: refresh below
+        }
+      }
+      return this.requestNewTokens(refreshFile);
+    });
+  }
+
+  private async requestNewTokens(refreshFile: string): Promise<RefreshResult> {
+    const tokenFile = this.tokenFile!;
+    const refreshToken = readRefreshToken(refreshFile);
 
     let data: { access_token?: string; refresh_token?: string };
     try {
@@ -95,24 +136,26 @@ export class CookUnityAuth {
       data = r.data as typeof data;
     } catch (error) {
       throw new Error(
-        `Refresh failed: ${this.getErrorMessage(error).replace(/\.$/, "")}. If the refresh token was revoked or expired, copy a new one from the browser and run scripts/load-refresh-token.sh.`
+        `Refresh failed: ${this.getRefreshErrorMessage(error)}. If the refresh token was revoked or expired, copy a new one from the browser, run scripts/load-refresh-token.sh, then clear cookunity.com site data in Chrome and log in again.`
       );
     }
     if (!data?.access_token) throw new Error("Refresh response had no access token.");
-    const expiresAt = this.decodeJwtExpiry(data.access_token);
 
-    // Refresh token first: if the access write then fails, the chain is intact and the next
-    // call simply refreshes again. The reverse order could lose the only valid refresh token.
-    const rotated = typeof data.refresh_token === "string" && isRefreshTokenShape(data.refresh_token);
-    if (rotated) writeSecretFile(this.refreshTokenFile, data.refresh_token!);
-    writeSecretFile(this.tokenFile, data.access_token);
+    // Save any rotated refresh token before touching the access token: the server has already
+    // spent the old one, so a decode or write failure below must not lose the new one.
+    const newRefresh = data.refresh_token;
+    const rotated = typeof newRefresh === "string" && isPlausibleRefreshToken(newRefresh) && newRefresh !== refreshToken;
+    if (rotated) writeSecretFile(refreshFile, newRefresh!);
+
+    const expiresAt = this.decodeJwtExpiry(data.access_token);
+    writeSecretFile(tokenFile, data.access_token);
 
     this.tokens = { access_token: data.access_token, expires_at: expiresAt };
     return { expiresAt, refreshTokenRotated: rotated };
   }
 
   private isTokenValid(tokens: AuthTokens): boolean {
-    return Date.now() < tokens.expires_at - 60000;
+    return Date.now() < tokens.expires_at - TOKEN_EXPIRY_MARGIN_MS;
   }
 
   private loadTokenFromFile(): void {
@@ -128,7 +171,7 @@ export class CookUnityAuth {
     // decode a valid exp, and fail later as an opaque 401 with nothing pointing back here.
     const token = raw.replace(/^bearer\s+/i, "").trim();
     const expiresAt = this.decodeJwtExpiry(token);
-    if (Date.now() >= expiresAt) {
+    if (Date.now() >= expiresAt - TOKEN_EXPIRY_MARGIN_MS) {
       throw new Error(
         `Token in ${path} has expired. Harvest a fresh one from Chrome DevTools.`
       );
@@ -224,6 +267,13 @@ export class CookUnityAuth {
     } catch (error) {
       throw new Error(`Authentication failed: ${this.getErrorMessage(error)}`);
     }
+  }
+
+  /** Like getErrorMessage, plus the OAuth `error` code (invalid_grant = revoked or expired). */
+  private getRefreshErrorMessage(error: unknown): string {
+    const message = this.getErrorMessage(error).replace(/\.$/, "");
+    const code = axios.isAxiosError(error) ? (error.response?.data as Record<string, unknown> | undefined)?.error : undefined;
+    return typeof code === "string" ? `${code}: ${message}` : message;
   }
 
   private getErrorMessage(error: unknown): string {

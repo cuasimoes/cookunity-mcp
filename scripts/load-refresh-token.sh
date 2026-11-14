@@ -8,6 +8,8 @@
 #
 # Never prints the token. Usage: load-refresh-token.sh [--dry-run]
 set -euo pipefail
+# An inherited SHELLOPTS=xtrace would trace the clipboard assignment below to stderr.
+set +x
 
 DRY_RUN=0
 case "${1:-}" in

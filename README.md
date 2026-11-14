@@ -116,8 +116,8 @@ call without a restart.
 ### Automatic renewal with a refresh token
 
 The web app's Auth0 login also stores a refresh token (scope `offline_access`). With
-one on disk, the server mints a new access token whenever the token file is missing or
-expired, so the daily DevTools copy goes away.
+one on disk, the server mints a new access token whenever the token file can't be used
+(missing, expired, empty or malformed) or the server answers 401, so the daily DevTools copy goes away.
 
 1. Sign in to cookunity.com in Chrome. DevTools → Application → Local Storage → the
    `@@auth0spajs@@::…` key → copy the `refresh_token` value from its `body` (starts `v1.`).
@@ -131,9 +131,16 @@ expired, so the daily DevTools copy goes away.
    expiry, whether a new refresh token came back).
 
 If rotation is on, each refresh returns a new refresh token, which is saved immediately
-(temp file + rename). A revoked or expired refresh token produces an error telling you to
-re-run the loader. Refreshes are single-flight within a process; don't point two server
-processes at one refresh-token file.
+(temp file + fsync + rename), before the access token is touched. A revoked or expired
+refresh token produces an error with the OAuth code and a pointer to the loader. A 401 on
+a token that still looks valid (revoked early) triggers one refresh and one retry.
+
+Every Claude session starts its own server process, so several processes sharing one
+refresh-token file is the normal case. Renewals take a lockfile (`<refresh file>.lock`)
+and re-check the token file once they hold it, so the usual outcome is one refresh and the
+other sessions reusing it. A lock left by a crash is taken over after 60 s. Keep the
+refresh-token file and token file on a local disk, not a network share where `wx` locks
+aren't atomic.
 
 ## Configuration
 

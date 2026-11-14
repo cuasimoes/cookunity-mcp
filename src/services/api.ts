@@ -379,7 +379,8 @@ export class CookUnityAPI {
     endpoint: string,
     query: string,
     variables: Record<string, unknown> = {},
-    operationName?: string
+    operationName?: string,
+    isRetry = false
   ): Promise<Record<string, unknown>> {
     const accessToken = await this.auth.getAccessToken();
     try {
@@ -405,7 +406,13 @@ export class CookUnityAPI {
     } catch (error) {
       if (error instanceof AxiosError) {
         const status = error.response?.status;
-        if (status === 401) throw new Error("Authentication expired or revoked. If using COOKUNITY_TOKEN_FILE, harvest a fresh token; otherwise verify COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
+        if (status === 401 && !isRetry && this.auth.hasRefreshToken()) {
+          // Revoked before `exp`: the cached token still looks valid, so renew and retry once.
+          // A 401 means the request was not processed, so retrying cannot double a write.
+          await this.auth.refreshAfterRejection(accessToken);
+          return this.executeGraphQL(endpoint, query, variables, operationName, true);
+        }
+        if (status === 401) throw new Error("Authentication expired or revoked. If using a refresh token, run scripts/load-refresh-token.sh (and re-login in Chrome); if using COOKUNITY_TOKEN_FILE alone, harvest a fresh token; otherwise verify COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
         if (status === 429) throw new Error("Rate limited by CookUnity API. Please wait before retrying.");
         throw new Error(`CookUnity API error (HTTP ${status ?? "unknown"}): ${error.message}`);
       }

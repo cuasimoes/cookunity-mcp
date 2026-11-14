@@ -11,10 +11,11 @@
 import fs from "fs";
 import { CookUnityAuth } from "../../src/services/auth.js";
 import { CookUnityAPI } from "../../src/services/api.js";
-import { isRefreshTokenShape } from "../../src/services/token-store.js";
-import { looksLikeJwt, resolveTokenPath } from "./_shared.mts";
+import { isPlausibleRefreshToken } from "../../src/services/token-store.js";
+import { looksLikeJwt } from "./_shared.mts";
 
-const tokenFile = resolveTokenPath();
+// No .token fallback: a refresh writes a live access token, and the fallback is inside the repo.
+const tokenFile = process.env.COOKUNITY_TOKEN_FILE;
 const refreshTokenFile = process.env.COOKUNITY_REFRESH_TOKEN_FILE;
 
 function describeFile(label: string, file: string): void {
@@ -23,6 +24,10 @@ function describeFile(label: string, file: string): void {
   console.log(`${label.padEnd(14)}: ${file} (mode ${mode.toString(8)}${(mode & 0o077) !== 0 ? " <-- chmod 600" : ""}, modified ${stat.mtime.toLocaleString()})`);
 }
 
+if (!tokenFile) {
+  console.log("STATUS: NOT CONFIGURED — set COOKUNITY_TOKEN_FILE (outside the repo; renewed access tokens are written there).");
+  process.exit(2);
+}
 if (!refreshTokenFile) {
   console.log("STATUS: NOT CONFIGURED — set COOKUNITY_REFRESH_TOKEN_FILE (load it with scripts/load-refresh-token.sh).");
   process.exit(2);
@@ -32,9 +37,9 @@ if (!fs.existsSync(refreshTokenFile)) {
   process.exit(2);
 }
 // Shape check on the raw bytes, without printing them.
-const shapeOk = isRefreshTokenShape(fs.readFileSync(refreshTokenFile, "utf8").trim());
+const shapeOk = isPlausibleRefreshToken(fs.readFileSync(refreshTokenFile, "utf8").trim());
 describeFile("refresh file", refreshTokenFile);
-console.log(`shape ok      : ${shapeOk}`);
+console.log(`shape plausible: ${shapeOk}`);
 if (!shapeOk) {
   console.log("STATUS: BAD SHAPE — file does not hold a v1. refresh token. Run scripts/load-refresh-token.sh.");
   process.exit(2);
@@ -43,7 +48,7 @@ if (!shapeOk) {
 const auth = new CookUnityAuth({ tokenFile, refreshTokenFile });
 let result;
 try {
-  result = await auth.refresh();
+  result = await auth.refresh({ force: true });
 } catch (error) {
   const message = error instanceof Error ? error.message : "unknown error";
   console.log(`\nSTATUS: REFRESH FAILED — ${looksLikeJwt(message) ? "(message withheld: looked like a token)" : message}`);
@@ -52,7 +57,7 @@ try {
 
 const minutes = Math.round((result.expiresAt - Date.now()) / 60000);
 console.log(`new expiry    : ${new Date(result.expiresAt).toLocaleString()} (${minutes} min from now)`);
-console.log(`rotated       : ${result.refreshTokenRotated ? "yes — a new refresh token came back and was saved" : "no — the same refresh token stays valid"}`);
+console.log(`rotated       : ${result.refreshTokenRotated ? "yes — a different refresh token came back and was saved" : "no — the server returned no new refresh token, or the same one"}`);
 describeFile("refresh file", refreshTokenFile);
 describeFile("token file", tokenFile);
 
@@ -61,6 +66,7 @@ try {
   const days = await new CookUnityAPI({ tokenFile, refreshTokenFile }).getUpcomingDays();
   console.log(`\nSTATUS: WORKING — refreshed token accepted, ${days.length} delivery slots`);
 } catch (error) {
-  console.log(`\nSTATUS: MINTED BUT REJECTED — ${error instanceof Error ? error.message : "unknown error"}`);
+  const message = error instanceof Error ? error.message : "unknown error";
+  console.log(`\nSTATUS: MINTED BUT REJECTED — ${looksLikeJwt(message) ? "(message withheld: looked like a token)" : message}`);
   process.exit(3);
 }

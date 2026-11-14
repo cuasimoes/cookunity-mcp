@@ -34,7 +34,8 @@ Ordered. Start from the top unless something else is on fire.
 - **Access tokens renew from a stored refresh token** (#17, replaces #2's "stays manual").
   #2 held while nothing ran without Alex; the 24h lifetime still made every weekly run start
   with a devtools copy. Alex loads the Auth0 refresh token once (`scripts/load-refresh-token.sh`);
-  the server renews on demand and saves any rotated token immediately. Browser automation and
+  the server renews on demand (and once on a 401), under a cross-process lockfile, and
+  saves any rotated token immediately, before touching the access token. Browser automation and
   unattended callers stay out of scope. Live-unverified until `verify:refresh` runs: rotation,
   the disuse/absolute lifetimes, and that the browser gets its own token family after a fresh login.
 - **Menu caching rejected** (2026-08-15). `mealPublic` is cheaper and stateless; break-even is
@@ -45,6 +46,7 @@ Ordered. Start from the top unless something else is on fire.
 ## Verification
 
 No unit tests and no CI. `scripts/verify/` runs against the live API; `npm run verify:dates`
-is the date-resolution gate; `npm run verify:refresh` checks the refresh token. Read-only scripts are safe; never let a script make a cart,
+is the date-resolution gate. `npm run verify:refresh` checks the refresh token live;
+`verify:refresh-offline` runs the stubbed refresh cases. Read-only scripts are safe; never let a script make a cart,
 confirm, or skip write. Write *tools* may be driven only against the fenced API in
 `verify-dates.mts` (see `scripts/verify/README.md`).
