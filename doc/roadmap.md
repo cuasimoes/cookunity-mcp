@@ -47,6 +47,6 @@ Ordered. Start from the top unless something else is on fire.
 
 No unit tests and no CI. `scripts/verify/` runs against the live API; `npm run verify:dates`
 is the date-resolution gate. `npm run verify:refresh` checks the refresh token live;
-`verify:refresh-offline` runs the stubbed refresh cases. Read-only scripts are safe; never let a script make a cart,
-confirm, or skip write. Write *tools* may be driven only against the fenced API in
-`verify-dates.mts` (see `scripts/verify/README.md`).
+`verify:refresh-offline` runs the stubbed refresh cases. Read-only scripts are safe; never
+let a script make a cart, confirm, or skip write. Write *tools* may be driven only against
+the fenced API in `verify-dates.mts` (see `scripts/verify/README.md`).
