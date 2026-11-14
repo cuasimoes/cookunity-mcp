@@ -81,6 +81,17 @@ reply = err;
 const msg = await mk().getAccessToken().then(() => "", (e: Error) => e.message);
 check("error carries OAuth code and loader hint", msg.includes("invalid_grant") && msg.includes("load-refresh-token") && !msg.includes(OLD_RT));
 
+// Network / 5xx: no re-capture hint, and the saved refresh token is untouched
+const netErr = Object.assign(new AxiosError("connect ECONNREFUSED"), { code: "ECONNREFUSED" });
+const fiveXx = Object.assign(new AxiosError("x"), { response: { status: 503, statusText: "Service Unavailable", data: "<html>down</html>" } });
+for (const [label, e] of [["network error", netErr], ["5xx", fiveXx]] as const) {
+  reset(jwt(1));
+  reply = e;
+  const m = await mk().getAccessToken().then(() => "", (x: Error) => x.message);
+  check(`${label}: says retry later, no re-capture hint`, m.includes("Retry later") && !m.includes("load-refresh-token") && !m.includes("site data"));
+  check(`${label}: refresh token file untouched`, read(refreshFile) === OLD_RT);
+}
+
 // Cross-process lock: two instances, one request; second sees the renewed file
 reset(jwt(1));
 reply = { access_token: future(), refresh_token: NEW_RT };

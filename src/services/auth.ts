@@ -135,9 +135,7 @@ export class CookUnityAuth {
       );
       data = r.data as typeof data;
     } catch (error) {
-      throw new Error(
-        `Refresh failed: ${this.getRefreshErrorMessage(error)}. If the refresh token was revoked or expired, copy a new one from the browser, run scripts/load-refresh-token.sh, then clear cookunity.com site data in Chrome and log in again.`
-      );
+      throw new Error(this.describeRefreshFailure(error));
     }
     if (!data?.access_token) throw new Error("Refresh response had no access token.");
 
@@ -269,11 +267,18 @@ export class CookUnityAuth {
     }
   }
 
-  /** Like getErrorMessage, plus the OAuth `error` code (invalid_grant = revoked or expired). */
-  private getRefreshErrorMessage(error: unknown): string {
+  /**
+   * Only an OAuth `error` code (e.g. invalid_grant) means Auth0 rejected the token, so only
+   * then is re-capturing it the fix. Network errors and 5xx leave the saved token untouched
+   * and valid; sending the user to re-capture during an outage would be wasted work.
+   */
+  private describeRefreshFailure(error: unknown): string {
     const message = this.getErrorMessage(error).replace(/\.$/, "");
     const code = axios.isAxiosError(error) ? (error.response?.data as Record<string, unknown> | undefined)?.error : undefined;
-    return typeof code === "string" ? `${code}: ${message}` : message;
+    if (typeof code === "string") {
+      return `Refresh failed: ${code}: ${message}. The refresh token was rejected; copy a new one from the browser, run scripts/load-refresh-token.sh, then clear cookunity.com site data in Chrome and log in again.`;
+    }
+    return `Refresh failed: could not get a response from Auth0 (${message}). Retry later; the saved refresh token is untouched.`;
   }
 
   private getErrorMessage(error: unknown): string {
