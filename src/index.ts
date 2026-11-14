@@ -19,9 +19,15 @@ function createServer(): McpServer {
   const email = process.env.COOKUNITY_EMAIL;
   const password = process.env.COOKUNITY_PASSWORD;
   const tokenFile = process.env.COOKUNITY_TOKEN_FILE;
+  const refreshTokenFile = process.env.COOKUNITY_REFRESH_TOKEN_FILE;
 
   if (!tokenFile && (!email || !password)) {
     console.error("ERROR: Set COOKUNITY_TOKEN_FILE or both COOKUNITY_EMAIL and COOKUNITY_PASSWORD.");
+    process.exit(1);
+  }
+
+  if (refreshTokenFile && !tokenFile) {
+    console.error("ERROR: COOKUNITY_REFRESH_TOKEN_FILE also needs COOKUNITY_TOKEN_FILE (renewed access tokens are written there).");
     process.exit(1);
   }
 
@@ -30,7 +36,7 @@ function createServer(): McpServer {
     version: "1.0.0",
   });
 
-  const api = new CookUnityAPI({ email, password, tokenFile });
+  const api = new CookUnityAPI({ email, password, tokenFile, refreshTokenFile });
 
   registerMenuTools(server, api);
   registerUserTools(server, api);

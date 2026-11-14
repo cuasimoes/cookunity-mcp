@@ -3,7 +3,15 @@ import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
 import { AuthTokens } from "../types.js";
-import { AUTH_BASE_URL, AUTH_CLIENT_ID, AUTH_REALM } from "../constants.js";
+import {
+  AUTH_BASE_URL,
+  AUTH_CLIENT_ID,
+  AUTH_ORIGIN,
+  AUTH_REALM,
+  AUTH_TOKEN_TIMEOUT_MS,
+  TOKEN_EXPIRY_MARGIN_MS,
+} from "../constants.js";
+import { readRefreshToken, isPlausibleRefreshToken, withFileLock, writeSecretFile } from "./token-store.js";
 
 const REDIRECT_URI = "https://www.cookunity.com";
 
@@ -11,15 +19,37 @@ export interface AuthOptions {
   email?: string;
   password?: string;
   tokenFile?: string;
+  /** Needs `tokenFile`: renewed access tokens are written there. */
+  refreshTokenFile?: string;
+}
+
+export interface RefreshResult {
+  expiresAt: number;
+  /** Whether the refresh token the server returned differs from the one we sent. */
+  refreshTokenRotated: boolean;
+  /** True when another process had already renewed the token, so no request was made. */
+  skipped?: boolean;
+}
+
+export interface RefreshOptions {
+  /** Refresh even if the token file already holds a usable token (verify scripts). */
+  force?: boolean;
+  /** A token the server just rejected: a file holding the same one is not a renewal. */
+  rejectedToken?: string;
 }
 
 export class CookUnityAuth {
   private email?: string;
   private password?: string;
   private tokenFile?: string;
+  private refreshTokenFile?: string;
   private tokens: AuthTokens | null = null;
+  // Shared by concurrent callers: a rotating refresh token can be spent only once, so two
+  // parallel refreshes would make the loser look like token reuse and revoke the chain.
+  private inflightRefresh: Promise<RefreshResult> | null = null;
 
   constructor(opts: AuthOptions) {
+    this.refreshTokenFile = opts.refreshTokenFile;
     this.email = opts.email;
     this.password = opts.password;
     this.tokenFile = opts.tokenFile;
@@ -30,7 +60,13 @@ export class CookUnityAuth {
       return this.tokens.access_token;
     }
     if (this.tokenFile) {
-      this.loadTokenFromFile();
+      try {
+        this.loadTokenFromFile();
+      } catch (error) {
+        if (!this.refreshTokenFile) throw error;
+        // Missing or expired access token: renew it rather than asking for a devtools copy.
+        await this.refresh();
+      }
       return this.tokens!.access_token;
     }
     if (!this.email || !this.password) {
@@ -40,8 +76,84 @@ export class CookUnityAuth {
     return this.tokens!.access_token;
   }
 
+  /**
+   * Exchange the stored refresh token for a new access token and persist both.
+   * Concurrent calls share one request.
+   */
+  refresh(opts: RefreshOptions = {}): Promise<RefreshResult> {
+    this.inflightRefresh ??= this.doRefresh(opts).finally(() => {
+      this.inflightRefresh = null;
+    });
+    return this.inflightRefresh;
+  }
+
+  hasRefreshToken(): boolean {
+    return !!this.refreshTokenFile && !!this.tokenFile;
+  }
+
+  /** The server rejected the cached token (revoked before `exp`): drop it and renew. */
+  async refreshAfterRejection(rejectedToken: string): Promise<void> {
+    this.tokens = null;
+    await this.refresh({ rejectedToken });
+  }
+
+  private async doRefresh(opts: RefreshOptions): Promise<RefreshResult> {
+    if (!this.refreshTokenFile || !this.tokenFile) {
+      throw new Error("Refresh needs both COOKUNITY_REFRESH_TOKEN_FILE and COOKUNITY_TOKEN_FILE.");
+    }
+    const refreshFile = this.refreshTokenFile;
+    // Every Claude session runs its own server process; the lock keeps them from spending one
+    // rotating refresh token twice.
+    return withFileLock(`${refreshFile}.lock`, async () => {
+      if (!opts.force) {
+        // Another process may have renewed while we waited for the lock.
+        try {
+          this.loadTokenFromFile();
+          if (this.tokens!.access_token !== opts.rejectedToken) {
+            return { expiresAt: this.tokens!.expires_at, refreshTokenRotated: false, skipped: true };
+          }
+        } catch {
+          // still missing or expired: refresh below
+        }
+      }
+      return this.requestNewTokens(refreshFile);
+    });
+  }
+
+  private async requestNewTokens(refreshFile: string): Promise<RefreshResult> {
+    const tokenFile = this.tokenFile!;
+    const refreshToken = readRefreshToken(refreshFile);
+
+    let data: { access_token?: string; refresh_token?: string };
+    try {
+      // Messages are rebuilt from error_description/status only: an Axios error carries the
+      // request body (the refresh token) in its config.
+      const r = await axios.post(
+        `${AUTH_BASE_URL}/oauth/token`,
+        { grant_type: "refresh_token", client_id: AUTH_CLIENT_ID, refresh_token: refreshToken },
+        { headers: { "Content-Type": "application/json", Origin: AUTH_ORIGIN }, timeout: AUTH_TOKEN_TIMEOUT_MS }
+      );
+      data = r.data as typeof data;
+    } catch (error) {
+      throw new Error(this.describeRefreshFailure(error));
+    }
+    if (!data?.access_token) throw new Error("Refresh response had no access token.");
+
+    // Save any rotated refresh token before touching the access token: the server has already
+    // spent the old one, so a decode or write failure below must not lose the new one.
+    const newRefresh = data.refresh_token;
+    const rotated = typeof newRefresh === "string" && isPlausibleRefreshToken(newRefresh) && newRefresh !== refreshToken;
+    if (rotated) writeSecretFile(refreshFile, newRefresh!);
+
+    const expiresAt = this.decodeJwtExpiry(data.access_token);
+    writeSecretFile(tokenFile, data.access_token);
+
+    this.tokens = { access_token: data.access_token, expires_at: expiresAt };
+    return { expiresAt, refreshTokenRotated: rotated };
+  }
+
   private isTokenValid(tokens: AuthTokens): boolean {
-    return Date.now() < tokens.expires_at - 60000;
+    return Date.now() < tokens.expires_at - TOKEN_EXPIRY_MARGIN_MS;
   }
 
   private loadTokenFromFile(): void {
@@ -57,7 +169,7 @@ export class CookUnityAuth {
     // decode a valid exp, and fail later as an opaque 401 with nothing pointing back here.
     const token = raw.replace(/^bearer\s+/i, "").trim();
     const expiresAt = this.decodeJwtExpiry(token);
-    if (Date.now() >= expiresAt) {
+    if (Date.now() >= expiresAt - TOKEN_EXPIRY_MARGIN_MS) {
       throw new Error(
         `Token in ${path} has expired. Harvest a fresh one from Chrome DevTools.`
       );
@@ -153,6 +265,20 @@ export class CookUnityAuth {
     } catch (error) {
       throw new Error(`Authentication failed: ${this.getErrorMessage(error)}`);
     }
+  }
+
+  /**
+   * Only an OAuth `error` code (e.g. invalid_grant) means Auth0 rejected the token, so only
+   * then is re-capturing it the fix. Network errors and 5xx leave the saved token untouched
+   * and valid; sending the user to re-capture during an outage would be wasted work.
+   */
+  private describeRefreshFailure(error: unknown): string {
+    const message = this.getErrorMessage(error).replace(/\.$/, "");
+    const code = axios.isAxiosError(error) ? (error.response?.data as Record<string, unknown> | undefined)?.error : undefined;
+    if (typeof code === "string") {
+      return `Refresh failed: ${code}: ${message}. The refresh token was rejected; copy a new one from the browser, run scripts/load-refresh-token.sh, then clear cookunity.com site data in Chrome and log in again.`;
+    }
+    return `Refresh failed: could not get a response from Auth0 (${message}). Retry later; the saved refresh token is untouched.`;
   }
 
   private getErrorMessage(error: unknown): string {

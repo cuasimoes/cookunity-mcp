@@ -17,6 +17,9 @@ build/
 # Harvested auth tokens (token-auth branch)
 .token
 *.token
+# Temp/lock files from atomic token writes and the refresh lock
+.*.tmp
+*.lock
 
 # IDE
 .vscode/
