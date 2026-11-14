@@ -31,7 +31,12 @@ Ordered. Start from the top unless something else is on fire.
   unskip call `resolveDeliveryDay` *before* writing — sequential, never in parallel like
   `fetchForDelivery`. A skipped week keeps `scheduled: true` (checked live on 2026-11-22: skip,
   probe, unskip), so unskip needs no special case. Paused weeks are still unverified live.
-- **Token refresh stays manual** (#2). No unattended caller exists to justify automating it.
+- **Access tokens renew from a stored refresh token** (#17, replaces #2's "stays manual").
+  #2 held while nothing ran without Alex; the 24h lifetime still made every weekly run start
+  with a devtools copy. Alex loads the Auth0 refresh token once (`scripts/load-refresh-token.sh`);
+  the server renews on demand and saves any rotated token immediately. Browser automation and
+  unattended callers stay out of scope. Live-unverified until `verify:refresh` runs: rotation,
+  the disuse/absolute lifetimes, and that the browser gets its own token family after a fresh login.
 - **Menu caching rejected** (2026-08-15). `mealPublic` is cheaper and stateless; break-even is
   ~223 meals inspected per session, far past any real run.
 - **Upstream is not a target.** Dormant since 2026-02-24. Don't wait on it, don't file there.
@@ -40,6 +45,6 @@ Ordered. Start from the top unless something else is on fire.
 ## Verification
 
 No unit tests and no CI. `scripts/verify/` runs against the live API; `npm run verify:dates`
-is the date-resolution gate. Read-only scripts are safe; never let a script make a cart,
+is the date-resolution gate; `npm run verify:refresh` checks the refresh token. Read-only scripts are safe; never let a script make a cart,
 confirm, or skip write. Write *tools* may be driven only against the fenced API in
 `verify-dates.mts` (see `scripts/verify/README.md`).

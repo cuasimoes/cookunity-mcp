@@ -83,6 +83,7 @@ npx cookunity-mcp-server
 | `COOKUNITY_EMAIL` | Unless `COOKUNITY_TOKEN_FILE` is set | CookUnity account email |
 | `COOKUNITY_PASSWORD` | Unless `COOKUNITY_TOKEN_FILE` is set | CookUnity account password |
 | `COOKUNITY_TOKEN_FILE` | Unless email/password are set | Path to a file holding a pre-acquired access token. Takes precedence over email/password. |
+| `COOKUNITY_REFRESH_TOKEN_FILE` | No (needs `COOKUNITY_TOKEN_FILE`) | Path to a file holding an Auth0 refresh token. When the access token is missing or expired, the server renews it and writes it to `COOKUNITY_TOKEN_FILE`. |
 | `TRANSPORT` | No | `stdio` (default) or `http` |
 | `PORT` | No | HTTP port when using `http` transport (default: 3000) |
 
@@ -108,9 +109,31 @@ build contexts. `.gitignore` and `.dockerignore` cover `.token` / `*.token` as a
 backstop, but they only match those names — a path outside the repo needs no
 backstop at all.
 
-Tokens last roughly 24 hours. On expiry the server throws an error naming the file
-and what to do; re-harvesting into the same path is picked up on the next call
-without a restart. Refresh is manual by design — see issue #2.
+Tokens last roughly 24 hours. Without a refresh token, the server throws an error
+naming the file on expiry; re-harvesting into the same path is picked up on the next
+call without a restart.
+
+### Automatic renewal with a refresh token
+
+The web app's Auth0 login also stores a refresh token (scope `offline_access`). With
+one on disk, the server mints a new access token whenever the token file is missing or
+expired, so the daily DevTools copy goes away.
+
+1. Sign in to cookunity.com in Chrome. DevTools → Application → Local Storage → the
+   `@@auth0spajs@@::…` key → copy the `refresh_token` value from its `body` (starts `v1.`).
+2. Set `COOKUNITY_REFRESH_TOKEN_FILE` (keep it outside the repo) and run
+   `scripts/load-refresh-token.sh [--dry-run]`. It checks the clipboard shape and writes
+   the file with mode 600; it never prints the token.
+3. **Clear cookunity.com site data in Chrome and log in again.** One refresh token must have
+   one holder: if Auth0 rotates tokens with reuse detection, a browser and this server
+   sharing one look like theft and both get revoked.
+4. `npm run verify:refresh` does one refresh and prints only derived facts (success, new
+   expiry, whether a new refresh token came back).
+
+If rotation is on, each refresh returns a new refresh token, which is saved immediately
+(temp file + rename). A revoked or expired refresh token produces an error telling you to
+re-run the loader. Refreshes are single-flight within a process; don't point two server
+processes at one refresh-token file.
 
 ## Configuration
 
@@ -154,7 +177,7 @@ This server reverse-engineers CookUnity's internal GraphQL APIs:
 - **Menu Service** (`https://menu-service.cookunity.com/graphql`) — meal browsing and search
 - **Subscription Service** (`https://subscription-back.cookunity.com/graphql`) — cart, orders, deliveries, user info
 
-Authentication uses Auth0 with the `cookunity` realm. Tokens are cached and refreshed automatically.
+Authentication uses Auth0 with the `cookunity` realm. Access tokens are cached in memory and renewed from the refresh token when one is configured.
 
 ### Known Limitations
 

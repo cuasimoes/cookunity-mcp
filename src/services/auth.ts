@@ -3,7 +3,14 @@ import axios from "axios";
 import { wrapper } from "axios-cookiejar-support";
 import { CookieJar } from "tough-cookie";
 import { AuthTokens } from "../types.js";
-import { AUTH_BASE_URL, AUTH_CLIENT_ID, AUTH_REALM } from "../constants.js";
+import {
+  AUTH_BASE_URL,
+  AUTH_CLIENT_ID,
+  AUTH_ORIGIN,
+  AUTH_REALM,
+  AUTH_TOKEN_TIMEOUT_MS,
+} from "../constants.js";
+import { readRefreshToken, isRefreshTokenShape, writeSecretFile } from "./token-store.js";
 
 const REDIRECT_URI = "https://www.cookunity.com";
 
@@ -11,15 +18,28 @@ export interface AuthOptions {
   email?: string;
   password?: string;
   tokenFile?: string;
+  /** Needs `tokenFile`: renewed access tokens are written there. */
+  refreshTokenFile?: string;
+}
+
+export interface RefreshResult {
+  expiresAt: number;
+  /** Whether the response carried a new refresh token (rotation). */
+  refreshTokenRotated: boolean;
 }
 
 export class CookUnityAuth {
   private email?: string;
   private password?: string;
   private tokenFile?: string;
+  private refreshTokenFile?: string;
   private tokens: AuthTokens | null = null;
+  // Shared by concurrent callers: a rotating refresh token can be spent only once, so two
+  // parallel refreshes would make the loser look like token reuse and revoke the chain.
+  private inflightRefresh: Promise<RefreshResult> | null = null;
 
   constructor(opts: AuthOptions) {
+    this.refreshTokenFile = opts.refreshTokenFile;
     this.email = opts.email;
     this.password = opts.password;
     this.tokenFile = opts.tokenFile;
@@ -30,7 +50,13 @@ export class CookUnityAuth {
       return this.tokens.access_token;
     }
     if (this.tokenFile) {
-      this.loadTokenFromFile();
+      try {
+        this.loadTokenFromFile();
+      } catch (error) {
+        if (!this.refreshTokenFile) throw error;
+        // Missing or expired access token: renew it rather than asking for a devtools copy.
+        await this.refresh();
+      }
       return this.tokens!.access_token;
     }
     if (!this.email || !this.password) {
@@ -38,6 +64,51 @@ export class CookUnityAuth {
     }
     await this.authenticate();
     return this.tokens!.access_token;
+  }
+
+  /**
+   * Exchange the stored refresh token for a new access token and persist both.
+   * Concurrent calls share one request.
+   */
+  refresh(): Promise<RefreshResult> {
+    this.inflightRefresh ??= this.doRefresh().finally(() => {
+      this.inflightRefresh = null;
+    });
+    return this.inflightRefresh;
+  }
+
+  private async doRefresh(): Promise<RefreshResult> {
+    if (!this.refreshTokenFile || !this.tokenFile) {
+      throw new Error("Refresh needs both COOKUNITY_REFRESH_TOKEN_FILE and COOKUNITY_TOKEN_FILE.");
+    }
+    const refreshToken = readRefreshToken(this.refreshTokenFile);
+
+    let data: { access_token?: string; refresh_token?: string };
+    try {
+      // Messages are rebuilt from error_description/status only: an Axios error carries the
+      // request body (the refresh token) in its config.
+      const r = await axios.post(
+        `${AUTH_BASE_URL}/oauth/token`,
+        { grant_type: "refresh_token", client_id: AUTH_CLIENT_ID, refresh_token: refreshToken },
+        { headers: { "Content-Type": "application/json", Origin: AUTH_ORIGIN }, timeout: AUTH_TOKEN_TIMEOUT_MS }
+      );
+      data = r.data as typeof data;
+    } catch (error) {
+      throw new Error(
+        `Refresh failed: ${this.getErrorMessage(error).replace(/\.$/, "")}. If the refresh token was revoked or expired, copy a new one from the browser and run scripts/load-refresh-token.sh.`
+      );
+    }
+    if (!data?.access_token) throw new Error("Refresh response had no access token.");
+    const expiresAt = this.decodeJwtExpiry(data.access_token);
+
+    // Refresh token first: if the access write then fails, the chain is intact and the next
+    // call simply refreshes again. The reverse order could lose the only valid refresh token.
+    const rotated = typeof data.refresh_token === "string" && isRefreshTokenShape(data.refresh_token);
+    if (rotated) writeSecretFile(this.refreshTokenFile, data.refresh_token!);
+    writeSecretFile(this.tokenFile, data.access_token);
+
+    this.tokens = { access_token: data.access_token, expires_at: expiresAt };
+    return { expiresAt, refreshTokenRotated: rotated };
   }
 
   private isTokenValid(tokens: AuthTokens): boolean {
