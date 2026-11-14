@@ -36,8 +36,9 @@ Ordered. Start from the top unless something else is on fire.
   with a devtools copy. Alex loads the Auth0 refresh token once (`scripts/load-refresh-token.sh`);
   the server renews on demand (and once on a 401), under a cross-process lockfile, and
   saves any rotated token immediately, before touching the access token. Browser automation and
-  unattended callers stay out of scope. Live-unverified until `verify:refresh` runs: rotation,
-  the disuse/absolute lifetimes, and that the browser gets its own token family after a fresh login.
+  unattended callers stay out of scope. Live QA 2026-11-14 (PR #18 comment): rotation is on, the
+  chain held across repeated refreshes, end-to-end renewal passed, and the browser got its own
+  token family after a fresh login. Still unobserved: the disuse/absolute lifetimes.
 - **Menu caching rejected** (2026-08-15). `mealPublic` is cheaper and stateless; break-even is
   ~223 meals inspected per session, far past any real run.
 - **Upstream is not a target.** Dormant since 2026-02-24. Don't wait on it, don't file there.
