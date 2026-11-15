@@ -15,6 +15,10 @@ Ordered. Start from the top unless something else is on fire.
 2. **#16** — `confirm_order` says "cart is empty" on a week that already has an order, which
    invites adding meals and confirming again. Low urgency: `/cookunity` reads the order from
    `list_deliveries` first. Safe for AFK — the refusal is verifiable behind the fence.
+   **Ship with #19** — `add_to_cart` and `remove_from_cart` report success on an ordered week
+   but change nothing (verified live 2026-11-15 and 2026-10-03). Same `day.order` guard, same
+   fenced verification, one PR. The `/cookunity` skill already avoids these calls on ordered
+   weeks, so this is a guard for a session that forgets, not an open incident.
 3. **#5** — Menu response types don't match runtime shapes (`nutritionalFacts` strings,
    `userRating` null on ~399/401 meals). Low urgency: `/cookunity` already ignores ratings and
    the skill documents the workaround.
